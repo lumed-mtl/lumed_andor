@@ -1,11 +1,9 @@
 {
-  "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
-    "editor.formatOnSave": true,
-    "editor.codeActionsOnSave": {
-      "source.organizeImports": "explicit"
-    }
+  "editor.formatOnSave": true,
+  "isort.args": ["--profile=black"],
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
   },
-  "isort.args": ["--profile", "black"],
+  "editor.defaultFormatter": "ms-python.black-formatter",
   "pylint.args": ["--extension-pkg-whitelist=PyQt5"]
 }
