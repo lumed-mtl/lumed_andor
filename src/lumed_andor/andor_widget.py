@@ -10,6 +10,7 @@ from lumed_andor.workerthreads import Worker
 
 logger = logging.getLogger(__name__)
 
+
 class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
     def __init__(self):
         super().__init__()
