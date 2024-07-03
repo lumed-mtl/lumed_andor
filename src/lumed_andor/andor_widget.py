@@ -15,8 +15,13 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
     def __init__(self):
         super().__init__()
         logger.info("initializing andorCameraWidget")
+        self.setupUi(self)
 
-        self.camera = None
+        self.connectingToAndorDrivers()
+        if not self.camera:
+            self.setEnabled(False)
+            return
+
         self.threadpool = QThreadPool(parent=self)
 
         # Only 1 thread at a time to talk to camera!!!
@@ -27,14 +32,14 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         self.current_acquisition: AndorAcquisition = None
 
         # UI stuff
-        self.setupUi(self)
         self.setDefaultUI()
         self.connectSlots()
 
         # Create update timer
+        self.update_camera_info()
         self.updateStatusTimer = QTimer()
         self.updateStatusTimer.setInterval(100)
-        self.updateStatusTimer.timeout.connect(self.update_status)
+        self.updateStatusTimer.timeout.connect(self.update_camera_info)
         self.updateStatusTimer.start()
 
         self.sync_delay = self.syncDelaySpinBox.value()
@@ -47,7 +52,7 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
             logger.info("Andor camera drivers successfully loaded")
         except OSError as e:
             self.camera = None
-            logger.error("%s PLEASE MAKE SURE ANDOR DRIVERS ARE INSTALLED", e)
+            logger.warning("%s Cannot load Andor camera drivers.", e)
 
     def setDefaultUI(self):
         # readModes
