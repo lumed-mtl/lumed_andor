@@ -5,5 +5,14 @@
     "source.organizeImports": "explicit"
   },
   "editor.defaultFormatter": "ms-python.black-formatter",
-  "pylint.args": ["--extension-pkg-whitelist=PyQt5"]
+  "pylint.args": ["--disable=C,R", "--extension-pkg-whitelist=PyQt5"],
+  "pylint.severity": {
+    "convention": "Information",
+    "error": "Error",
+    "fatal": "Error",
+    "refactor": "Hint",
+    "warning": "Warning",
+    "info": "Information"
+  },
+  "autoDocstring.docstringFormat": "sphinx"
 }
