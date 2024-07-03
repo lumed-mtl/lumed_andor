@@ -636,12 +636,3 @@ class AndorAcquisition:
                     data = data.flatten()
 
         return data
-
-
-if __name__ == "__main__":
-    camera = AndorCamera()
-    print(camera.GetAvailableCameras())
-    print(camera.connect())
-
-    camera.get_info()
-    print(camera.disconnect())
