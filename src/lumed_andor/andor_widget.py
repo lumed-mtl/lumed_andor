@@ -263,10 +263,7 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         and runs the initialization procedure for the andor camera.
         """
         logger.info("initializing camera")
-        self.connectingToAndorDrivers()
-
-        if not self.camera:
-            return
+        self.initializeButton.setEnabled(False)
 
         # Initializing steps
         andor_msg = self.camera.connect()
@@ -305,7 +302,9 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         _, _, _, andor_msg = self.camera.GetAcquisitionTimings()
         logger.info("turned cooler ON - %s", andor_msg)
 
-    def update_status(self):
+        self.initializeButton.isEnabled(True)
+
+    def update_camera_info(self):
         if self.threadpool.activeThreadCount() > 0:
             # This skip prevents 2 different thread attempting to poll the camera
             # which would result in a crash
