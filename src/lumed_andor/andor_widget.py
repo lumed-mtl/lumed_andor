@@ -302,7 +302,7 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         _, _, _, andor_msg = self.camera.GetAcquisitionTimings()
         logger.info("turned cooler ON - %s", andor_msg)
 
-        self.initializeButton.isEnabled(True)
+        self.initializeButton.setEnabled(True)
 
     def update_camera_info(self):
         if self.threadpool.activeThreadCount() > 0:
