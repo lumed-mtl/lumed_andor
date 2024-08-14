@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         logger.info("initializing andorCameraWidget")
         self.setupUi(self)
 
