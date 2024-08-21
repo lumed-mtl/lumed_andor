@@ -150,8 +150,22 @@ ANDOR_CODES = {
 SUCCESS_CODE = 20002
 
 
+@dataclass
+class AndorError:
+    code: int = SUCCESS_CODE
+
+    @property
+    def is_success(self) -> bool:
+        return self.code == SUCCESS_CODE
+
+    @property
+    def message(self) -> str:
+        return ANDOR_CODES[self.code]
+
+
 @dataclass(kw_only=True)
 class AndorInfo:
+    # Getter Info
     # Basic confing
     model: str = ""
     serial_number: str = ""
@@ -176,6 +190,11 @@ class AndorInfo:
     n_preamp_gains: float = float("nan")
     current_gain_index: float = float("nan")
     current_gain_desc: str = ""
+
+
+@dataclass(kw_only=True)
+class AndorSettings:
+    pass
 
 
 @dataclass(kw_only=True)
@@ -209,8 +228,8 @@ class AndorCamera:
         self.__libandor__ = ctypes.cdll.LoadLibrary(lib_path)
 
         # Internal parameter references
-        self.last_error_code = float("nan")
-        self.last_error_msg = ""
+        self.last_error: AndorError = AndorError()
+
         self.acquisition_mode: int = 0
         self.read_mode: int = 0
         self.shutter_profile: ShutterProfile
@@ -236,9 +255,8 @@ class AndorCamera:
         totalCameras = ctypes.c_long()
         err_code = self.__libandor__.GetAvailableCameras(ctypes.byref(totalCameras))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(totalCameras.value)
 
@@ -266,9 +284,8 @@ class AndorCamera:
         temp = ctypes.c_int()
         err_code = self.__libandor__.GetTemperature(ctypes.byref(temp))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(temp.value)
 
@@ -280,9 +297,8 @@ class AndorCamera:
             channel, ctypes.byref(_type), ctypes.byref(speeds)
         )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(speeds.value)
 
@@ -290,9 +306,8 @@ class AndorCamera:
         speeds = ctypes.c_int()
         err_code = self.__libandor__.GetNumberVSSpeeds(ctypes.byref(speeds))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(speeds.value)
 
@@ -300,9 +315,8 @@ class AndorCamera:
         speed = ctypes.c_float()
         err_code = self.__libandor__.GetHSSpeed(0, 0, 0, ctypes.byref(speed))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return float(speed.value)
 
@@ -310,9 +324,8 @@ class AndorCamera:
         speed = ctypes.c_float()
         err_code = self.__libandor__.GetVSSpeed(0, ctypes.byref(speed))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return float(speed.value)
 
@@ -331,9 +344,8 @@ class AndorCamera:
         accumulate_cycle = 1000 * float(accumulate_cycle.value)
         kinetic_cycle = 1000 * float(kinetic_cycle.value)
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return exposure_time, accumulate_cycle, kinetic_cycle
 
@@ -348,9 +360,8 @@ class AndorCamera:
             ctypes.byref(xpixel), ctypes.byref(ypixel)
         )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(xpixel.value), int(ypixel.value)
 
@@ -361,9 +372,8 @@ class AndorCamera:
             ctypes.byref(minTemp), ctypes.byref(maxTemp)
         )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(minTemp.value), int(maxTemp.value)
 
@@ -371,9 +381,8 @@ class AndorCamera:
         status = ctypes.c_int()
         err_code = self.__libandor__.GetStatus(ctypes.byref(status))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(status.value)
 
@@ -381,9 +390,8 @@ class AndorCamera:
         cooler_on = ctypes.c_int()
         err_code = self.__libandor__.IsCoolerOn(ctypes.byref(cooler_on))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return cooler_on.value == 1
 
@@ -394,9 +402,8 @@ class AndorCamera:
             ctypes.byref(acc), ctypes.byref(series)
         )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(acc.value), int(series.value)
 
@@ -404,9 +411,8 @@ class AndorCamera:
         name = ctypes.create_string_buffer(260)
         err_code = self.__libandor__.GetHeadModel(name)
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return str(name.value.decode())
 
@@ -415,9 +421,8 @@ class AndorCamera:
         size = ctypes.c_int(size)
         err_code = self.__libandor__.GetAcquiredData((InArray), size)
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return InArray
 
@@ -425,9 +430,8 @@ class AndorCamera:
         nGain = ctypes.c_int()
         err_code = self.__libandor__.GetNumberPreAmpGains(ctypes.byref(nGain))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(nGain.value)
 
@@ -438,9 +442,8 @@ class AndorCamera:
             gainIndex, ctypes.byref(gainstr)
         )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(gainIndex.value), str(gainstr.value.decode("utf-8"))
 
@@ -451,9 +454,8 @@ class AndorCamera:
             gain_index, ctypes.byref(gain_factor)
         )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return float(gain_factor.value)
 
@@ -465,9 +467,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.acquisition_mode = mode
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetReadMode(self, mode: int = 0) -> None:
         err_code = self.__libandor__.SetReadMode(mode)
@@ -475,9 +476,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.read_mode = mode
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetShutter(
         self,
@@ -498,9 +498,8 @@ class AndorCamera:
                 opening_time=opening_time,
             )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetExposureTime(self, time_ms: int) -> None:
         time_s = ctypes.c_float(time_ms / 1000)
@@ -509,9 +508,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.target_exposure_time = time_ms
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetTriggerMode(self, mode: int) -> None:
         err_code = self.__libandor__.SetTriggerMode(mode)
@@ -519,9 +517,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.trigger_mode = mode
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetAccumulationCycleTime(self, time_ms: int) -> None:
         time_s = ctypes.c_float(time_ms / 1000)
@@ -530,9 +527,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.target_accumulation_time = time_ms
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetNumberAccumulations(self, n_accumulations: int) -> None:
         n = ctypes.c_int(n_accumulations)
@@ -541,9 +537,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.n_accumulation = n_accumulations
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetNumberKinetics(self, n_kinetics: int) -> None:
         n = ctypes.c_int(n_kinetics)
@@ -552,9 +547,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.n_kinetics = n_kinetics
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetKineticCycleTime(self, time_ms: int) -> None:
         time_s = ctypes.c_float(time_ms / 1000)
@@ -563,26 +557,23 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.target_kinetic_time = time_ms
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetHSSpeed(self, typ: int, index: int) -> None:
         amp = ctypes.c_int(typ)
         index = ctypes.c_int(index)
         err_code = self.__libandor__.SetHSSpeed(amp, index)
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetVSSpeed(self, index: int):
         index = ctypes.c_int(index)
         err_code = self.__libandor__.SetVSSpeed(index)
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetImage(
         self, hbin: int, vbin: int, hstart: int, hend: int, vstart: int, vend: int
@@ -600,9 +591,8 @@ class AndorCamera:
                 hbin=hbin, vbin=vbin, hstart=hstart, vstart=vstart, hend=hend, vend=vend
             )
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetTemperature(self, temperature: int):
         t = ctypes.c_int(temperature)
@@ -611,9 +601,8 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.target_temperature = temperature
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetSingleTrack(self, center: int, height: int):
         c = ctypes.c_int(center)
@@ -623,75 +612,65 @@ class AndorCamera:
         if err_code == SUCCESS_CODE:
             self.single_track = SingleTrack(center=center, height=height)
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetPreAmpGain(self, gainIndex: int):
         gain = ctypes.c_int(gainIndex)
         err_code = self.__libandor__.SetPreAmpGain((gain))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     ## Camera actions
 
     def AbortAcquisition(self) -> None:
         err_code = self.__libandor__.AbortAcquisition()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def CancelWait(self) -> None:
         err_code = self.__libandor__.CancelWait()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def CoolerOn(self) -> None:
         err_code = self.__libandor__.CoolerON()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def CoolerOFF(self) -> None:
         err_code = self.__libandor__.CoolerOFF()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def Initialize(self) -> None:
         err_code = self.__libandor__.Initialize("/usr/local/etc/andor".encode("utf8"))
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def StartAcquisition(self) -> None:
         err_code = self.__libandor__.StartAcquisition()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def WaitForAcquisition(self) -> None:
         err_code = self.__libandor__.WaitForAcquisition()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def ShutDown(self) -> None:
         err_code = self.__libandor__.ShutDown()
 
-        self.last_error_code = err_code
-        self.last_error_msg = ANDOR_CODES[err_code]
-        logger.debug("%i, %s", self.last_error_code, self.last_error_msg)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     ## compound methods
 
