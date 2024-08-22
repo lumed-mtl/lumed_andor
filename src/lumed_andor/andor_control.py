@@ -1,6 +1,6 @@
 import ctypes
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -164,61 +164,69 @@ class AndorError:
 
 
 @dataclass(kw_only=True)
-class AndorInfo:
-    # Getter Info
-    # Basic confing
-    model: str = ""
-    serial_number: str = ""
-    is_connected: bool = False
-    temperature: float = float("nan")
-    exposure_time: float = float("nan")  # [ms]
-    # Normal config
-    accumulate_time: float = float("nan")  # [ms]
-    kinetic_time: float = float("nan")  # [ms]
-    read_mode: float = float("nan")
-    acquisition_mode: float = float("nan")
-    n_accumulation: float = float("nan")
-    n_kinetic: float = float("nan")
-    is_cooler_on: float = False
-    # Expert Config
-    hbin: float = float("nan")
-    vbin: float = float("nan")
-    hstart: float = float("nan")
-    vstart: float = float("nan")
-    hend: float = float("nan")
-    vend: float = float("nan")
-    n_preamp_gains: float = float("nan")
-    current_gain_index: float = float("nan")
-    current_gain_desc: str = ""
-
-
-@dataclass(kw_only=True)
-class AndorSettings:
-    pass
-
-
-@dataclass(kw_only=True)
-class ShutterProfile:
-    ttl_type: bool
-    mode: int
-    closing_time: int
-    opening_time: int
-
-
-@dataclass(kw_only=True)
 class ImageConfig:
-    hbin: int
-    vbin: int
-    hstart: int
-    hend: int
-    vstart: int
-    vend: int
+    hbin: int = 1
+    vbin: int = 1
+    hstart: int = 1
+    hend: int = 1
+    vstart: int = 1
+    vend: int = 1
+
+
+@dataclass(kw_only=True)
+class ShutterSettings:
+    ttl_type: bool = 1
+    mode: int = 0
+    closing_time: int = 0
+    opening_time: int = 0
 
 
 @dataclass(kw_only=True)
 class SingleTrack:
-    center: int = 0
-    height: int = 0
+    center: int = 1
+    height: int = 1
+
+
+@dataclass(kw_only=True)
+class AndorInfo:
+    # Basic confing
+    is_connected: bool = False
+    temperature: int = 0
+    is_cooler_on: int = False
+
+    exposure_time: float = float("nan")  # [ms]
+    accumulate_cycle: float = float("nan")  # [ms]
+    kinetic_cycle: float = float("nan")  # [ms]
+
+    # Camera (fixed) properties
+    model: str = ""
+    serial_number: str = ""
+    max_temperature: int = 0
+    min_temperature: int = 0
+    xpixels: int = 0
+    ypixels: int = 0
+
+
+@dataclass(kw_only=True)
+class AndorSettings:
+    # basic settings
+    target_exposure_time: int = 0
+    acquisition_mode: int = 1
+    read_mode: int = 0
+    target_temperature: int = 0
+    cooler_on: bool = True
+
+    # Normal settings
+    number_kinetic: int = 1
+    number_accumulation: int = 1
+    target_accumulation_time: int = 0
+    target_kinetic_time: int = 0
+    image_config: ImageConfig = field(default_factory=ImageConfig)
+    single_track: SingleTrack = field(default_factory=SingleTrack)
+
+    # Advanced settings
+    shutter_profile: ShutterSettings = field(default_factory=ShutterSettings)
+    trigger_mode: int = 0
 
 
 class AndorCamera:
@@ -228,20 +236,23 @@ class AndorCamera:
         self.__libandor__ = ctypes.cdll.LoadLibrary(lib_path)
 
         # Internal parameter references
+        self.is_connected: bool = False
         self.last_error: AndorError = AndorError()
 
         self.acquisition_mode: int = 0
         self.read_mode: int = 0
-        self.shutter_profile: ShutterProfile
+        self.shutter_profile: ShutterSettings
         self.trigger_mode: int = 0
         self.target_exposure_time: int = 0
         self.target_accumulation_time: int = 0
         self.target_kinetic_time: int = 0
-        self.n_accumulation: int = 0
-        self.n_kinetics: int = 0
-        self.image_config: ImageConfig
+        self.number_accumulation: int = 0
+        self.number_kinetics: int = 0
+        self.image_config: ImageConfig()
         self.target_temperature: int = 0
-        self.single_track: SingleTrack
+        self.single_track: SingleTrack()
+
+        self.info: AndorInfo = AndorInfo()
 
     ## Wrapping methods from SDK
 
@@ -259,6 +270,15 @@ class AndorCamera:
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return int(totalCameras.value)
+
+    def GetCameraSerialNumber(self) -> int:
+        serial_number = ctypes.c_int()
+        err_code = self.__libandor__.GetCameraSerialNumber(ctypes.byref(serial_number))
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(serial_number.value)
 
     def GetTemperature(self) -> int:
         """
@@ -461,7 +481,7 @@ class AndorCamera:
 
     ## Setters
 
-    def SetAcquisitionMode(self, mode: int = 1) -> None:
+    def SetAcquisitionMode(self, mode: int) -> None:
         err_code = self.__libandor__.SetAcquisitionMode(mode)
 
         if err_code == SUCCESS_CODE:
@@ -470,7 +490,7 @@ class AndorCamera:
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetReadMode(self, mode: int = 0) -> None:
+    def SetReadMode(self, mode: int) -> None:
         err_code = self.__libandor__.SetReadMode(mode)
 
         if err_code == SUCCESS_CODE:
@@ -481,17 +501,17 @@ class AndorCamera:
 
     def SetShutter(
         self,
-        TTLtype: int = 1,
-        mode: int = 0,
-        closing_time: int = 0,
-        opening_time: int = 0,
+        TTLtype: int,
+        mode: int,
+        closing_time: int,
+        opening_time: int,
     ) -> None:
         err_code = self.__libandor__.SetShutter(
             TTLtype, mode, closing_time, opening_time
         )
 
         if err_code == SUCCESS_CODE:
-            self.shutter_profile = ShutterProfile(
+            self.shutter_profile = ShutterSettings(
                 ttl_type=TTLtype,
                 mode=mode,
                 closing_time=closing_time,
@@ -535,7 +555,7 @@ class AndorCamera:
         err_code = self.__libandor__.SetNumberAccumulations(n)
 
         if err_code == SUCCESS_CODE:
-            self.n_accumulation = n_accumulations
+            self.number_accumulation = n_accumulations
 
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
@@ -545,7 +565,7 @@ class AndorCamera:
         err_code = self.__libandor__.SetNumberKinetics(n)
 
         if err_code == SUCCESS_CODE:
-            self.n_kinetics = n_kinetics
+            self.number_kinetics = n_kinetics
 
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
@@ -652,6 +672,8 @@ class AndorCamera:
         err_code = self.__libandor__.Initialize("/usr/local/etc/andor".encode("utf8"))
 
         self.last_error = AndorError(err_code)
+        self.is_connected = self.last_error.is_success
+
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def StartAcquisition(self) -> None:
@@ -676,36 +698,112 @@ class AndorCamera:
 
     def connect(self) -> None:
         self.Initialize()
+
+        if not self.last_error.is_success:
+            return
+
+        self.get_info()
         self.apply_default_settings()
+        self.get_info()
 
     def disconnect(self) -> None:
         self.apply_default_settings()
         self.ShutDown()
 
     def apply_default_settings(self) -> None:
+        default_settings = AndorSettings()
 
-        self.SetAcquisitionMode()
-        self.SetReadMode()
-        self.SetShutter()
-        self.SetExposureTime(0)
-        self.SetTriggerMode(0)
+        # Temperature to max temp
+        default_settings.target_temperature = self.info.max_temperature
 
-        self.SetAccumulationCycleTime(0)
-        self.SetNumberAccumulations(1)
-        self.SetNumberKinetics(1)
-        self.SetKineticCycleTime(0)
+        # Image config to camera sensor size
+        default_settings.image_config.hend = self.info.xpixels
+        default_settings.image_config.vend = self.info.ypixels
 
-        _, maxTemp = self.GetTemperatureRange()
-        self.SetTemperature(maxTemp)
-        self.CoolerOn()
+        # Single track to entire sensor size
+        default_settings.single_track.center = self.info.ypixels // 2
+        default_settings.single_track.height = self.info.ypixels // 2
 
-        # Image binning
-        xpixel, ypixel = self.GetDetector()
-        self.SetImage(hbin=1, vbin=1, hstart=1, vstart=1, hend=xpixel, vend=ypixel)
-        self.SetSingleTrack(ypixel // 2, ypixel // 2)
+        self.apply_settings(default_settings)
 
-    def get_info(self) -> dict:
-        pass
+    def apply_settings(self, setting: AndorSettings) -> None:
+
+        # Basic settings
+        self.SetExposureTime(setting.target_exposure_time)
+        self.SetAcquisitionMode(setting.acquisition_mode)
+        self.SetReadMode(setting.read_mode)
+        self.SetTemperature(setting.target_temperature)
+        if setting.cooler_on:
+            self.CoolerOn()
+        else:
+            self.CoolerOFF()
+
+        # Normal settings
+        self.SetNumberKinetics(setting.number_kinetic)
+        self.SetNumberAccumulations(setting.number_accumulation)
+        self.SetAccumulationCycleTime(setting.target_accumulation_time)
+        self.SetKineticCycleTime(setting.target_kinetic_time)
+        self.SetImage(
+            hbin=setting.image_config.hbin,
+            vbin=setting.image_config.vbin,
+            hstart=setting.image_config.hstart,
+            vstart=setting.image_config.vstart,
+            hend=setting.image_config.hend,
+            vend=setting.image_config.vend,
+        )
+        self.SetSingleTrack(
+            center=setting.single_track.center,
+            height=setting.single_track.height,
+        )
+
+        # Advanced settings
+        self.SetShutter(
+            TTLtype=setting.shutter_profile.ttl_type,
+            mode=setting.shutter_profile.mode,
+            closing_time=setting.shutter_profile.closing_time,
+            opening_time=setting.shutter_profile.opening_time,
+        )
+        self.SetTriggerMode(setting.trigger_mode)
+
+    def get_settings(self) -> AndorSettings:
+        settings = AndorSettings()
+
+        # Basic settings
+        settings.target_exposure_time = self.target_exposure_time
+        settings.acquisition_mode = self.acquisition_mode
+        settings.read_mode = self.read_mode
+        settings.target_temperature = self.target_temperature
+        settings.cooler_on = self.IsCoolerOn()
+
+        # Normal settings
+        settings.number_kinetic = self.number_kinetics
+        settings.number_accumulation = self.number_accumulation
+        settings.target_accumulation_time = self.target_accumulation_time
+        settings.target_kinetic_time = self.target_kinetic_time
+        settings.image_config = self.image_config
+        settings.single_track = self.single_track
+
+        # Advanced settings
+        settings.shutter_profile = self.shutter_profile
+        settings.trigger_mode = self.trigger_mode
+
+        return settings
+
+    def get_info(self) -> None:
+        info = AndorInfo()
+
+        info.is_connected = self.is_connected
+        info.model = self.GetHeadModel()
+        info.serial_number = self.GetCameraSerialNumber()
+        info.min_temperature, info.max_temperature = self.GetTemperatureRange()
+        info.temperature = self.GetTemperature()
+        info.is_cooler_on = self.IsCoolerOn()
+        info.exposure_time, info.accumulate_cycle, info.kinetic_cycle = (
+            self.GetAcquisitionTimings()
+        )
+        info.xpixels, info.ypixels = self.GetDetector()
+
+        self.info = info
 
 
 if __name__ == "__main__":
@@ -725,4 +823,7 @@ if __name__ == "__main__":
     camera = AndorCamera()
 
     camera.connect()
+    camera.get_info()
+    print(camera.info)
+    print(camera.get_settings())
     camera.disconnect()
