@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 READ_MODES = {
     0: "Full Vertical Binning",
@@ -191,8 +191,10 @@ class SingleTrack:
 class AndorInfo:
     # Basic confing
     is_connected: bool = False
+    status: AndorError = field(default_factory=AndorError)
     temperature: int = 0
     is_cooler_on: int = False
+    cooling_status: str = ""
 
     exposure_time: float = float("nan")  # [ms]
     accumulate_cycle: float = float("nan")  # [ms]
@@ -241,16 +243,16 @@ class AndorCamera:
 
         self.acquisition_mode: int = 0
         self.read_mode: int = 0
-        self.shutter_profile: ShutterSettings
+        self.shutter_settings: ShutterSettings = ShutterSettings()
         self.trigger_mode: int = 0
         self.target_exposure_time: int = 0
         self.target_accumulation_time: int = 0
         self.target_kinetic_time: int = 0
         self.number_accumulation: int = 0
         self.number_kinetics: int = 0
-        self.image_config: ImageConfig()
+        self.image_config: ImageConfig = ImageConfig()
         self.target_temperature: int = 0
-        self.single_track: SingleTrack()
+        self.single_track: SingleTrack = SingleTrack()
 
         self.info: AndorInfo = AndorInfo()
 
@@ -397,14 +399,16 @@ class AndorCamera:
 
         return int(minTemp.value), int(maxTemp.value)
 
-    def GetStatus(self) -> int:
+    def GetStatus(self) -> AndorError:
         status = ctypes.c_int()
         err_code = self.__libandor__.GetStatus(ctypes.byref(status))
-
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-        return int(status.value)
+        if err_code == 20075:  # DRV_NOT_INITIALIZED
+            return AndorError(err_code)
+
+        return AndorError(status.value)
 
     def IsCoolerOn(self) -> bool:
         cooler_on = ctypes.c_int()
@@ -511,7 +515,7 @@ class AndorCamera:
         )
 
         if err_code == SUCCESS_CODE:
-            self.shutter_profile = ShutterSettings(
+            self.shutter_settings = ShutterSettings(
                 ttl_type=TTLtype,
                 mode=mode,
                 closing_time=closing_time,
@@ -608,7 +612,12 @@ class AndorCamera:
 
         if err_code == SUCCESS_CODE:
             self.image_config = ImageConfig(
-                hbin=hbin, vbin=vbin, hstart=hstart, vstart=vstart, hend=hend, vend=vend
+                hbin=hbin.value,
+                vbin=vbin.value,
+                hstart=hstart.value,
+                vstart=vstart.value,
+                hend=hend.value,
+                vend=vend.value,
             )
 
         self.last_error = AndorError(err_code)
@@ -692,6 +701,8 @@ class AndorCamera:
         err_code = self.__libandor__.ShutDown()
 
         self.last_error = AndorError(err_code)
+        self.is_connected = not self.last_error.is_success
+
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     ## compound methods
@@ -708,6 +719,7 @@ class AndorCamera:
 
     def disconnect(self) -> None:
         self.apply_default_settings()
+        self.get_info()
         self.ShutDown()
 
     def apply_default_settings(self) -> None:
@@ -784,7 +796,7 @@ class AndorCamera:
         settings.single_track = self.single_track
 
         # Advanced settings
-        settings.shutter_profile = self.shutter_profile
+        settings.shutter_profile = self.shutter_settings
         settings.trigger_mode = self.trigger_mode
 
         return settings
@@ -793,10 +805,12 @@ class AndorCamera:
         info = AndorInfo()
 
         info.is_connected = self.is_connected
+        info.status = self.GetStatus()
         info.model = self.GetHeadModel()
         info.serial_number = self.GetCameraSerialNumber()
         info.min_temperature, info.max_temperature = self.GetTemperatureRange()
         info.temperature = self.GetTemperature()
+        info.cooling_status = self.last_error.message
         info.is_cooler_on = self.IsCoolerOn()
         info.exposure_time, info.accumulate_cycle, info.kinetic_cycle = (
             self.GetAcquisitionTimings()
@@ -821,9 +835,8 @@ if __name__ == "__main__":
     logger.setLevel(logging.DEBUG)
 
     camera = AndorCamera()
-
     camera.connect()
-    camera.get_info()
-    print(camera.info)
-    print(camera.get_settings())
+
+    info_ = camera.info
+    settings_ = camera.get_settings()
     camera.disconnect()

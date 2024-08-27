@@ -1,12 +1,15 @@
 import logging
+from dataclasses import asdict
 
 import matplotlib.pyplot as plt
+import tomli_w
 from PyQt5.QtCore import QThreadPool, QTimer
 from PyQt5.QtWidgets import QWidget
 
-from lumed_andor.andor_control import AndorAcquisition, AndorCamera
+from lumed_andor.acquisition import AndorAcquisition
+from lumed_andor.andor_control import AndorCamera
+from lumed_andor.device_worker import DeviceWorker
 from lumed_andor.ui.andor_ui import Ui_andorCameraWidget
-from lumed_andor.workerthreads import Worker
 
 logger = logging.getLogger(__name__)
 
@@ -14,35 +17,40 @@ logger = logging.getLogger(__name__)
 class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        logger.info("initializing andorCameraWidget")
+        logger.info("Widget intialization")
         self.setupUi(self)
 
+        # Threadpool
+        self.threadpool = QThreadPool(parent=self)
+        self.threadpool.setMaxThreadCount(1)
+        # Only 1 thread at a time to talk to camera!!!
+        # More can cause seg faults
+
+        # Connecting to device
         self.connectingToAndorDrivers()
         if not self.camera:
             self.setEnabled(False)
             return
 
-        self.threadpool = QThreadPool(parent=self)
-
-        # Only 1 thread at a time to talk to camera!!!
-        # More can cause seg faults
-        self.threadpool.setMaxThreadCount(1)
-
         # Backend refs
-        self.current_acquisition: AndorAcquisition = None
+        self.current_acquisition: AndorAcquisition = AndorAcquisition(self.camera)
 
-        # UI stuff
-        self.setDefaultUI()
-        self.connectSlots()
+        # ui configuration
+        self.set_default_ui()
+        self.connect_ui_signals()
+        self.setup_update_timer()
 
-        # Create update timer
-        self.update_camera_info()
-        self.updateStatusTimer = QTimer()
-        self.updateStatusTimer.setInterval(100)
-        self.updateStatusTimer.timeout.connect(self.update_camera_info)
-        self.updateStatusTimer.start()
+        self.update_ui()
+        logger.info("Widget initialization complete")
 
-        self.sync_delay = self.syncDelaySpinBox.value()
+    def setup_update_timer(self):
+        """Creates the PyQt Timer and connects it to the function that updates
+        the UI and gets the laser infos."""
+        self.update_timer = QTimer()
+        self.update_timer.setInterval(100)
+
+        self.update_timer.timeout.connect(self.trigger_camera_update)
+        self.update_timer.timeout.connect(self.update_ui)
 
     def connectingToAndorDrivers(self):
         # Attempts to create an AndorCamera.
@@ -54,7 +62,7 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
             self.camera = None
             logger.warning("%s Cannot load Andor camera drivers.", e)
 
-    def setDefaultUI(self):
+    def set_default_ui(self):
         # readModes
         self.readModeComboBox.addItems(
             [
@@ -65,7 +73,8 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
                 "Image",
             ]
         )
-        # Disabeling not implemented options
+
+        # Disabling not implemented options
         self.readModeComboBox.model().item(1).setEnabled(False)
         self.readModeComboBox.model().item(2).setEnabled(False)
 
@@ -73,294 +82,229 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         self.acquisitionModeComboBox.addItems(
             ["Single Scan", "Accumulate", "Kinetics", "Fast Kinetics", "Run till abort"]
         )
-        # Disabeling not implemented options
-
+        # Disabling not implemented options
         self.acquisitionModeComboBox.model().item(1).setEnabled(False)
         self.acquisitionModeComboBox.model().item(3).setEnabled(False)
         self.acquisitionModeComboBox.model().item(4).setEnabled(False)
 
-        self.abortButton.setEnabled(False)
+    def connect_ui_signals(self):
+        logger.info("Connecting Slots to UI signals")
+        self.pushbtnConnect.clicked.connect(self.connectBtnClicked)
+        self.pushbtnDisconnect.clicked.connect(self.disconnectBtnClicked)
 
-    def connectSlots(self):
-        logger.info("Connecting Slots")
-        self.initializeButton.clicked.connect(self.initializedButtonClicked)
-        self.closeButton.clicked.connect(self.closeButtonClicked)
-        self.temperatureSpinBox.valueChanged.connect(self.temperatureChanged)
-        self.exposureTimeSpinBox.valueChanged.connect(self.exposureChanged)
-        self.acquisitionButton.clicked.connect(self.acquisitionButtonClicked)
-        self.abortButton.clicked.connect(self.abort_acquisition)
-        self.syncDelaySpinBox.valueChanged.connect(self.syncDelayChanged)
+        self.temperatureSpinBox.valueChanged.connect(self.set_target_temperature)
+        self.exposureTimeSpinBox.valueChanged.connect(self.set_exposure_time)
 
         # Read Mode
-        self.readModeComboBox.currentIndexChanged.connect(self.readModeChanged)
-        self.singleTrackNumSpinBox.valueChanged.connect(self.singleTrackChanged)
-        self.singleTrackWidthSpinBox.valueChanged.connect(self.singleTrackChanged)
+        self.readModeComboBox.currentIndexChanged.connect(self.set_readmode)
+        self.singleTrackCenterSpinBox.valueChanged.connect(self.set_single_track)
+        self.singleTrackHeightSpinBox.valueChanged.connect(self.set_single_track)
 
         # Acquisition Mode
         self.acquisitionModeComboBox.currentIndexChanged.connect(
-            self.acquisitionModeChanged
+            self.set_acquisition_mode
         )
-        self.kineticNumberSpinBox.valueChanged.connect(self.kineticNumberChanged)
-        self.kineticTimeSpinBox.valueChanged.connect(self.kineticTimeChanged)
+        self.kineticNumberSpinBox.valueChanged.connect(self.set_kinetic_number)
+        self.kineticTimeSpinBox.valueChanged.connect(self.set_kinetic_cycle)
 
-    def updateUI(self):
-        if not self.camera:
-            self.initializeButton.setEnabled(True)
-            self.closeButton.setEnabled(False)
-            return
+        # Test acquisition
+        self.testAcquisitionBtn.clicked.connect(self.acquisitionBtnClicked)
+        self.abortTestAcquisitionBtn.clicked.connect(self.abort_acquisition)
 
-        if self.camera.is_connected:
-            self.initializeButton.setEnabled(False)
-            self.closeButton.setEnabled(True)
-            self.temperatureSpinBox.setEnabled(True)
-            self.exposureTimeSpinBox.setEnabled(True)
-            self.acquisitionButton.setEnabled(True)
-            self.readModeComboBox.setEnabled(True)
-            self.singleTrackNumSpinBox.setEnabled(True)
-            self.singleTrackWidthSpinBox.setEnabled(True)
-            self.acquisitionModeComboBox.setEnabled(True)
-            self.kineticNumberSpinBox.setEnabled(True)
-            self.kineticTimeSpinBox.setEnabled(True)
-            self.syncDelaySpinBox.setEnabled(True)
+    def trigger_camera_update(self):
+        worker = DeviceWorker(self.camera.get_info)
+        self.threadpool.start(worker)
 
-        else:  # not connected
-            self.initializeButton.setEnabled(True)
-            self.closeButton.setEnabled(False)
-            self.temperatureSpinBox.setEnabled(False)
-            self.exposureTimeSpinBox.setEnabled(False)
-            self.acquisitionButton.setEnabled(False)
-            self.readModeComboBox.setEnabled(False)
-            self.singleTrackNumSpinBox.setEnabled(False)
-            self.singleTrackWidthSpinBox.setEnabled(False)
-            self.acquisitionModeComboBox.setEnabled(False)
-            self.kineticNumberSpinBox.setEnabled(False)
-            self.kineticTimeSpinBox.setEnabled(False)
-            self.syncDelaySpinBox.setEnabled(False)
+    def update_ui(self):
+
+        # Enable/disable controls if camera is connected or not
+        self.pushbtnConnect.setEnabled(not self.camera.is_connected)
+        self.pushbtnDisconnect.setEnabled(self.camera.is_connected)
+        self.groupBoxBasicControl.setEnabled(self.camera.is_connected)
+        self.tabAdvancedControl.setEnabled(self.camera.is_connected)
+        self.testAcquisitionBtn.setEnabled(not self.current_acquisition.in_progress)
+        self.abortTestAcquisitionBtn.setEnabled(self.current_acquisition.in_progress)
+
+        # info txtbox
+        self.plainTxtInfo.setPlainText(tomli_w.dumps(asdict(self.camera.info)))
+
+        # current settings txtbox
+        self.plainTxtCurrentSettings.setPlainText(
+            tomli_w.dumps(asdict(self.camera.get_settings()))
+        )
 
         # General camera info
-        self.cameraStatus.setText(self.camera.status)
-        self.temperatureLabel.setText(str(self.camera.temperature))
-        self.coolingStatusLabel.setText(self.camera.cooling_status)
-        self.exposureTimeSpinBox.setValue(int(self.camera.exposure_time))
+        self.cameraStatus.setText(self.camera.info.status.message)
+        self.temperatureLabel.setText(str(self.camera.info.temperature))
+        self.coolingStatusLabel.setText(self.camera.info.cooling_status)
+        self.exposureTimeSpinBox.setValue(int(self.camera.target_exposure_time))
+
         # Read Mode Box
         self.readModeComboBox.setCurrentIndex(self.camera.read_mode)
+        self.singleTrackCenterSpinBox.setValue(int(self.camera.single_track.center))
+        self.singleTrackHeightSpinBox.setValue(int(self.camera.single_track.height))
+
         # Acquisition Mode Box
         self.acquisitionModeComboBox.setCurrentIndex(self.camera.acquisition_mode - 1)
-        self.kineticNumberSpinBox.setValue(int(self.camera.n_kinetic))
-        self.kineticTimeSpinBox.setValue(int(self.camera.kinetic_time))
+        self.kineticNumberSpinBox.setValue(int(self.camera.number_kinetics))
+        self.kineticTimeSpinBox.setValue(int(self.camera.target_kinetic_time))
 
-    # Callbacks
+    def connectBtnClicked(self):
+        logger.info("Connecting to Andor camera")
+        self.pushbtnConnect.setEnabled(False)
 
-    def initializedButtonClicked(self):
-        # initializing camera
-        worker = Worker(self.initialize_camera)
+        worker = DeviceWorker(self.camera.connect)
+        worker.signals.finished.connect(self.post_camera_connection)
         self.threadpool.start(worker)
 
-    def closeButtonClicked(self):
-        # Closing camera
-        worker = Worker(self.close_camera)
+    def disconnectBtnClicked(self):
+        logger.info("Disconnecting Andor camera")
+        self.pushbtnDisconnect.setEnabled(False)
+        self.update_timer.stop()
+
+        worker = DeviceWorker(self.camera.disconnect)
+        worker.signals.finished.connect(self.post_camera_disconnection)
         self.threadpool.start(worker)
 
-    def temperatureChanged(self):
+    def post_camera_connection(self):
+        error = self.camera.last_error
+        if error.is_success:
+            logger.info(
+                "Successfully connected to Andor Camera - %i - %s",
+                error.code,
+                error.message,
+            )
+            self.set_control_bounds()
+            self.update_timer.start()
+
+    def set_control_bounds(self):
+        # Temperature
+        self.temperatureSpinBox.setMinimum(self.camera.info.min_temperature)
+        self.temperatureSpinBox.setMaximum(self.camera.info.max_temperature)
+
+        # Single Track settings
+        self.singleTrackCenterSpinBox.setMinimum(1)
+        self.singleTrackCenterSpinBox.setMaximum(self.camera.info.ypixels)
+        self.singleTrackHeightSpinBox.setMinimum(1)
+        self.singleTrackHeightSpinBox.setMaximum(self.camera.info.ypixels)
+
+        # Timings
+        self.exposureTimeSpinBox.setMinimum(10)
+
+    def post_camera_disconnection(self):
+        error = self.camera.last_error
+        if error.is_success:
+            logger.info(
+                "Successfully disconnected Andor Camera - %i - %s",
+                error.code,
+                error.message,
+            )
+            self.update_ui()
+        else:
+            self.update_timer.start()
+            self.pushbtnDisconnect.setEnabled(True)
+
+    def set_target_temperature(self):
         new_target_temp = self.temperatureSpinBox.value()
         if new_target_temp == self.camera.target_temperature:
             return
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetTemperature(new_target_temp)
+        self.camera.SetTemperature(new_target_temp)
+        andor_msg = self.camera.last_error.message
         logger.info("target temperature changed - %i - %s", new_target_temp, andor_msg)
 
-    def exposureChanged(self):
+    def set_exposure_time(self):
         new_exposure_time = self.exposureTimeSpinBox.value()
-        if new_exposure_time == self.camera.exposure_time:
+        if new_exposure_time == self.camera.target_exposure_time:
             return
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetExposureTime(new_exposure_time)
+        self.camera.SetExposureTime(new_exposure_time)
+        andor_msg = self.camera.last_error.message
         logger.info("exposure time changed - %i ms - %s", new_exposure_time, andor_msg)
-
-    def updateAcquisitionTiming(self):
-        # updating acquisition timings
-        exposure_time, _, kinetic_time, _ = self.camera.GetAcquisitionTimings()
-        self.exposureTimeSpinBox.setValue(int(exposure_time))
-        self.kineticTimeSpinBox.setValue(int(kinetic_time))
-
-    def acquisitionButtonClicked(self):
-        self.updateAcquisitionTiming()
-        self.abortButton.setEnabled(True)
-        self.acquisitionButton.setEnabled(False)
-        # Test acquisition
-        worker = Worker(self.test_acquisition)
-        worker.signals.result.connect(self.post_test_acquisition)
-        self.threadpool.start(worker)
 
     def abort_acquisition(self):
         logger.warning("Abborting acquisition")
         self.current_acquisition.abort_acquisition()
 
-    def syncDelayChanged(self):
-        new_sync_delay = self.syncDelaySpinBox.value()
-        self.sync_delay = new_sync_delay
-        logger.info("sync delay changed - %i", new_sync_delay)
-
-    def readModeChanged(self):
+    def set_readmode(self):
         new_readMode_index = self.readModeComboBox.currentIndex()
         new_readMode = self.readModeComboBox.currentText()
         if new_readMode_index == self.camera.read_mode:
             return
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetReadMode(new_readMode_index)
+        self.camera.SetReadMode(new_readMode_index)
+        andor_msg = self.camera.last_error.message
         logger.info("readMode changed to - %s - %s", new_readMode, andor_msg)
 
-    def singleTrackChanged(self):
-        new_num = self.singleTrackNumSpinBox.value()
-        new_width = self.singleTrackWidthSpinBox.value()
+    def set_single_track(self):
+        new_center = self.singleTrackCenterSpinBox.value()
+        new_height = self.singleTrackHeightSpinBox.value()
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetSingleTrack(new_num, new_width)
+        self.camera.SetSingleTrack(new_center, new_height)
+        andor_msg = self.camera.last_error.message
+
         logger.info(
             "Single Track changed - center:%i, width:%i - %s",
-            new_num,
-            new_width,
+            new_center,
+            new_height,
             andor_msg,
         )
 
-    def acquisitionModeChanged(self):
+    def set_acquisition_mode(self):
         new_acquiMode_index = self.acquisitionModeComboBox.currentIndex()
         new_acquiMode = self.acquisitionModeComboBox.currentText()
 
         if new_acquiMode_index == self.camera.acquisition_mode - 1:
             return
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetAcquisitionMode(new_acquiMode_index)
+        self.camera.SetAcquisitionMode(new_acquiMode_index + 1)
+        andor_msg = self.camera.last_error.message
         logger.info("readMode changed to - %s - %s", new_acquiMode, andor_msg)
 
-    def kineticNumberChanged(self):
+    def set_kinetic_number(self):
         new_kineticNumber = self.kineticNumberSpinBox.value()
-        if new_kineticNumber == self.camera.n_kinetic:
+        if new_kineticNumber == self.camera.number_kinetics:
             return
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetNumberKinetics(new_kineticNumber)
+        self.camera.SetNumberKinetics(new_kineticNumber)
+        andor_msg = self.camera.last_error.message
         logger.info("kinetic number changed - %i - %s", new_kineticNumber, andor_msg)
 
-    def kineticTimeChanged(self):
+    def set_kinetic_cycle(self):
         new_kineticTime = self.kineticTimeSpinBox.value()
-        if new_kineticTime == self.camera.kinetic_time:
+        if new_kineticTime == self.camera.info.kinetic_cycle:
             return
 
-        self.threadpool.waitForDone()
-        andor_msg = self.camera.SetKineticCycleTime(new_kineticTime)
+        self.camera.SetKineticCycleTime(new_kineticTime)
+        andor_msg = self.camera.last_error.message
         logger.info("kinetic time changed - %i - %s", new_kineticTime, andor_msg)
 
-    # Backend
+    def acquisitionBtnClicked(self):
 
-    def initialize_camera(self):
-        """
-        initialize_camera creates an AndorCamera object, add a reference to andorCameraWidget.camera
-        and runs the initialization procedure for the andor camera.
-        """
-        logger.info("initializing camera")
-        self.initializeButton.setEnabled(False)
-
-        # Initializing steps
-        andor_msg = self.camera.connect()
-        if self.camera.is_connected:
-            logger.info("Connected andor camera - %s", andor_msg)
-        else:
-            logger.warning("Failed to connect camera - %s", andor_msg)
-            return
-
-        # Detector sizing
-        width, height, andor_msg = self.camera.GetDetector()
-        andor_msg = self.camera.SetImage(1, 1, 1, width, 1, height)
-        self.singleTrackNumSpinBox.setRange(1, height)
-        self.singleTrackWidthSpinBox.setRange(1, int(height / 2))
-        logger.info("setted image size to detector size - %s", andor_msg)
-
-        # Temperature Range
-        temp_min, temp_max, andor_msg = self.camera.GetTemperatureRange()
-        logger.info("Temperature range - %i : %i - %s", temp_min, temp_max, andor_msg)
-
-        andor_msg = self.camera.SetReadMode(0)  # FVB
-        logger.info("setted ReadMode - %s", andor_msg)
-
-        andor_msg = self.camera.SetAcquisitionMode(0)  # single scan
-        logger.info("setted acquisition mode to single scan - %s", andor_msg)
-
-        andor_msg = self.camera.SetShutter(1, 0, 0, 0)
-        logger.info("setted shutter - %s", andor_msg)
-
-        andor_msg = self.camera.SetTriggerMode(0)
-        logger.info("setted trigger mode - %s", andor_msg)
-
-        andor_msg = self.camera.CoolerOn()
-        logger.info("turned cooler ON - %s", andor_msg)
-
-        _, _, _, andor_msg = self.camera.GetAcquisitionTimings()
-        logger.info("turned cooler ON - %s", andor_msg)
-
-        self.initializeButton.setEnabled(True)
-
-    def update_camera_info(self):
-        if self.threadpool.activeThreadCount() > 0:
-            # This skip prevents 2 different thread attempting to poll the camera
-            # which would result in a crash
-            return
-        elif not self.camera:
-            self.updateUI()
-            return
-
-        if self.camera.is_connected:
-            # Update camera info
-            self.camera.GetStatus()
-            self.temperatureSpinBox.setRange(
-                self.camera.temperature_min, self.camera.temperature_max
-            )
-            self.camera.GetTemperature()
-
-        self.updateUI()
-
-    def test_acquisition(self):
         self.current_acquisition = AndorAcquisition(self.camera)
-        self.current_acquisition.take_acquisition()
+        self.current_acquisition.signals.finished.connect(self.plot_acquisition_results)
+        logger.info("Starting test acquisition")
+        self.threadpool.start(self.current_acquisition)
 
-    def post_test_acquisition(self):
+    def plot_acquisition_results(self):
+
         logger.info("Test Acquisition completed - Plotting results")
-        self.abortButton.setEnabled(False)
+        logger.info(tomli_w.dumps(asdict(self.current_acquisition.result)))
+
         # Create figure
         fig = plt.figure()
 
-        acquisition_mode = self.current_acquisition.acquisition_mode
-        read_mode = self.current_acquisition.read_mode
-        data = self.current_acquisition.get_data()
+        result = self.current_acquisition.result
+        data = result.data
 
-        # Kinetic image
-        if read_mode == 4 and acquisition_mode == 3:
-            for i, image in enumerate(data):
-                plt.subplot(data.shape[0], 1, i + 1)
-                plt.imshow(image.T)
+        n, y, _ = data.shape
 
-        # Single scan image
-        elif read_mode == 4:
-            plt.imshow(data.T)
-
-        elif data.ndim > 1:
-            for signal in data:
-                plt.plot(signal)
-        else:
-            plt.plot(data)
+        for i in range(n):
+            if y > 1:  # Image
+                plt.subplot(n, 1, i + 1)
+                plt.imshow(data[i, :, :])
+            else:
+                plt.plot(data[i, 0, :])
 
         plt.tight_layout()
         fig.show()
-
-    def close_camera(self):
-        # Turn cooler off
-        andor_msg = self.camera.CoolerOFF()
-        logger.info("turned cooler OFF - %s", andor_msg)
-
-        # Shutdown camera
-        andor_msg = self.camera.disconnect()
-        logger.info("closed camera - %s", andor_msg)
