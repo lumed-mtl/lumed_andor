@@ -175,7 +175,7 @@ class ImageConfig:
 
 @dataclass(kw_only=True)
 class ShutterSettings:
-    ttl_type: bool = 1
+    ttl_type: int = 1
     mode: int = 0
     closing_time: int = 0
     opening_time: int = 0
@@ -185,6 +185,21 @@ class ShutterSettings:
 class SingleTrack:
     center: int = 1
     height: int = 1
+
+
+@dataclass(kw_only=True)
+class MultiTrack:
+    number: int = 1
+    height: int = 1
+    offset: int = 0
+    bottom: int = 0
+    gap: int = 0
+
+
+@dataclass(kw_only=True)
+class RandomTrack:
+    hbin: int = 1
+    tracks: list = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
@@ -223,8 +238,10 @@ class AndorSettings:
     number_accumulation: int = 1
     target_accumulation_time: int = 0
     target_kinetic_time: int = 0
-    image_config: ImageConfig = field(default_factory=ImageConfig)
+    multi_track: MultiTrack = field(default_factory=MultiTrack)
+    random_track: RandomTrack = field(default_factory=RandomTrack)
     single_track: SingleTrack = field(default_factory=SingleTrack)
+    image_config: ImageConfig = field(default_factory=ImageConfig)
 
     # Advanced settings
     shutter_profile: ShutterSettings = field(default_factory=ShutterSettings)
@@ -253,6 +270,8 @@ class AndorCamera:
         self.image_config: ImageConfig = ImageConfig()
         self.target_temperature: int = 0
         self.single_track: SingleTrack = SingleTrack()
+        self.multi_track: MultiTrack = MultiTrack()
+        self.random_track: RandomTrack = RandomTrack()
 
         self.info: AndorInfo = AndorInfo()
 
@@ -592,7 +611,7 @@ class AndorCamera:
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetVSSpeed(self, index: int):
+    def SetVSSpeed(self, index: int) -> None:
         index = ctypes.c_int(index)
         err_code = self.__libandor__.SetVSSpeed(index)
 
@@ -623,7 +642,7 @@ class AndorCamera:
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetTemperature(self, temperature: int):
+    def SetTemperature(self, temperature: int) -> None:
         t = ctypes.c_int(temperature)
         err_code = self.__libandor__.SetTemperature(t)
 
@@ -633,7 +652,40 @@ class AndorCamera:
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetSingleTrack(self, center: int, height: int):
+    def SetMultiTrack(self, number: int, height: int, offset: int) -> None:
+        number = ctypes.c_int(number)
+        height = ctypes.c_int(height)
+        offset = ctypes.c_int(offset)
+        bottom = ctypes.c_int()
+        gap = ctypes.c_int()
+        err_core = self.__libandor__.SetMultiTrack(
+            number, height, offset, ctypes.byref(bottom), ctypes.byref(gap)
+        )
+        if err_core == SUCCESS_CODE:
+            self.multi_track = MultiTrack(
+                number=number.value,
+                height=height.value,
+                offset=offset.value,
+                bottom=bottom.value,
+                gap=gap.value,
+            )
+
+        self.last_error = AndorError(err_core)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetRandomTracks(self, numTracks: int, areas: int) -> None:
+        numTracks = ctypes.c_int(numTracks)
+        c_areas = ctypes.c_int * len(areas)
+        c_areas = c_areas(*areas)
+
+        err_code = self.__libandor__.SetRandomTracks(numTracks, ctypes.byref(c_areas))
+        if err_code == SUCCESS_CODE:
+            self.random_track = RandomTrack(tracks=areas)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetSingleTrack(self, center: int, height: int) -> None:
         c = ctypes.c_int(center)
         h = ctypes.c_int(height)
         err_code = self.__libandor__.SetSingleTrack(c, h)
@@ -644,7 +696,7 @@ class AndorCamera:
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetPreAmpGain(self, gainIndex: int):
+    def SetPreAmpGain(self, gainIndex: int) -> None:
         gain = ctypes.c_int(gainIndex)
         err_code = self.__libandor__.SetPreAmpGain((gain))
 
@@ -736,6 +788,14 @@ class AndorCamera:
         default_settings.single_track.center = self.info.ypixels // 2
         default_settings.single_track.height = self.info.ypixels // 2
 
+        # Multi track to entire sensor size
+        default_settings.multi_track.number = 1
+        default_settings.multi_track.offset = 0
+        default_settings.multi_track.height = self.info.ypixels
+
+        # Random track to entire sensor size
+        default_settings.random_track.tracks = [1, self.info.ypixels]
+
         self.apply_settings(default_settings)
 
     def apply_settings(self, setting: AndorSettings) -> None:
@@ -767,6 +827,15 @@ class AndorCamera:
             center=setting.single_track.center,
             height=setting.single_track.height,
         )
+        self.SetMultiTrack(
+            number=setting.multi_track.number,
+            height=setting.multi_track.height,
+            offset=setting.multi_track.offset,
+        )
+        self.SetRandomTracks(
+            numTracks=len(setting.random_track.tracks) // 2,
+            areas=setting.random_track.tracks,
+        )
 
         # Advanced settings
         self.SetShutter(
@@ -794,6 +863,8 @@ class AndorCamera:
         settings.target_kinetic_time = self.target_kinetic_time
         settings.image_config = self.image_config
         settings.single_track = self.single_track
+        settings.multi_track = self.multi_track
+        settings.random_track = self.random_track
 
         # Advanced settings
         settings.shutter_profile = self.shutter_settings
@@ -839,4 +910,8 @@ if __name__ == "__main__":
 
     info_ = camera.info
     settings_ = camera.get_settings()
+
+    camera.SetRandomTracks(1, areas=[1, 25])
+
+    print(settings_)
     camera.disconnect()

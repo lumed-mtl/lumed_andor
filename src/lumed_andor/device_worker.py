@@ -45,6 +45,7 @@ class DeviceWorker(QRunnable):
             traceback.print_exc()
             exctype, value = sys.exc_info()[:2]
             self.signals.error.emit((exctype, value, traceback.format_exc()))
+            self.signals.finished.emit(False)
         else:
             self.signals.result.emit(result)  # Return the result of the processing
         finally:

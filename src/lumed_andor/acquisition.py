@@ -99,13 +99,13 @@ class AndorAcquisition(QRunnable):
         if read_mode == 0:  # FVB
             width = camera_info.xpixels
             height = 1
-        elif read_mode == 1:  # Multi-Track
-            width = 1
-            height = 1
+        elif read_mode == 1:  # Multi-Track TODO
+            width = camera_info.xpixels
+            height = camera_settings.multi_track.number
         elif read_mode == 2:  # Random-Track TODO
-            width = 1
-            height = 1
-        elif read_mode == 3:  # Single-Track TODO
+            width = camera_info.xpixels
+            height = len(camera_settings.random_track.tracks) // 2
+        elif read_mode == 3:  # Single-Track
             width = camera_info.xpixels
             height = 1
         elif read_mode == 4:  # image mode
@@ -124,97 +124,3 @@ class AndorAcquisition(QRunnable):
         # Reshaping data
         data = data.reshape((n_kinetic, height, width))
         self.result.data = data
-
-
-#     def get_data(self):
-#
-#         read_mode = self.result.camera_settings.read_mode
-#         acquisition_mode = self.result.camera_settings.acquisition_mode
-#
-#
-#         if read_mode == 4:  # image mode
-#             if acquisition_mode == 3:  # kinetic series
-#                 # Reshape into [n_kinetic x (width*height)]
-#                 images = data.reshape(
-#                     (self.n_kinetic, self.width * self.height), order="c"
-#                 )
-#                 data = []
-#                 for image in images:
-#                     image = image.reshape((self.width, self.height), order="f")
-#                     data.append(image)
-#
-#                 data = np.stack(data)
-#
-#             else:
-#                 data = data.reshape((self.width, self.height), order="f")
-#
-#         else:
-#             if self.camera.acquisition_mode == 3:
-#                 data = data.reshape((self.width, self.n_kinetic), order="f")
-#                 if self.n_kinetic > 1:
-#                     data = data.T
-#                 else:
-#                     data = data.flatten()
-#         return data
-#
-#
-# if __name__ == "__main__":
-#
-#     LOG_FORMAT = (
-#         "%(asctime)s - %(levelname)s"
-#         "(%(filename)s:%(funcName)s)"
-#         "(%(filename)s:%(lineno)d) - "
-#         "%(message)s"
-#     )
-#     formatter = logging.Formatter(LOG_FORMAT)
-#     terminal_handler = logging.StreamHandler()
-#     terminal_handler.setFormatter(formatter)
-#     logger.addHandler(terminal_handler)
-#     logger.setLevel(logging.DEBUG)
-#     logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
-#
-#     camera_ = AndorCamera()
-#     camera_.connect()
-#
-#     settings = camera_.get_settings()
-#     settings.target_temperature = -70
-#     settings.target_exposure_time = 50
-#
-#     # Read mode
-#     # 0 = FVB, 1 = Multi-track, 2 = Random-Track, 3 = Single-Track, 4=Image
-#     settings.read_mode = 4
-#     settings.single_track = SingleTrack(center=128, height=2)
-#     settings.image_config.hbin = 4
-#     settings.image_config.vbin = 2
-#
-#     # Acquisition mode
-#     settings.acquisition_mode = 3  # 1 = single scan 3 = kinetic
-#     settings.number_kinetic = 5
-#
-#     acquisition = AndorAcquisition(camera_)
-#     acquisition.apply_settings(settings)
-#
-#     acquisition.run()
-#     print(camera_.info)
-#
-#     print(acquisition.result.camera_info)
-#     print(acquisition.result.camera_settings)
-#
-#     data = acquisition.result.data
-#     print(data.size)
-#
-#     camera_.disconnect()
-#
-#     n, x, y = data.shape
-#     print(n, x, y)
-#     print(data)
-#
-#     plt.figure()
-#     for i in range(n):
-#         if settings.read_mode == 4:
-#             plt.figure()
-#             plt.imshow(data[i, :, :])
-#         else:
-#             plt.plot(data[i, :, :])
-#
-#     plt.show()
