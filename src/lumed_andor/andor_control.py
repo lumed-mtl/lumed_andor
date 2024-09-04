@@ -1,4 +1,5 @@
 import ctypes
+import importlib.metadata
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,6 +152,27 @@ SUCCESS_CODE = 20002
 
 
 @dataclass
+class SoftwareVersion:
+    eeprom: int = 0
+    cofFile: int = 0
+    vxdRev: int = 0
+    vxdVer: int = 0
+    dllRev: int = 0
+    dllVer: int = 0
+    lumed_andor: str = importlib.metadata.version("lumed_andor")
+
+
+@dataclass
+class HardwareVersion:
+    pcb: int = 0
+    decode: int = 0
+    dummy1: int = 0
+    dummy2: int = 0
+    firmware_version: int = 0
+    firmware_build: int = 0
+
+
+@dataclass
 class AndorError:
     code: int = SUCCESS_CODE
 
@@ -222,6 +244,9 @@ class AndorInfo:
     min_temperature: int = 0
     xpixels: int = 0
     ypixels: int = 0
+
+    software_version: SoftwareVersion = field(default_factory=SoftwareVersion)
+    hardware_version: HardwareVersion = field(default_factory=HardwareVersion)
 
 
 @dataclass(kw_only=True)
@@ -501,6 +526,65 @@ class AndorCamera:
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
         return float(gain_factor.value)
+
+    def GetSoftwareVersion(self) -> list[int, int, int, int, int, int]:
+        eprom = ctypes.c_int()
+        cofFile = ctypes.c_int()
+        vxdRev = ctypes.c_int()
+        vxdVer = ctypes.c_int()
+        dllRev = ctypes.c_int()
+        dllVer = ctypes.c_int()
+
+        err_code = self.__libandor__.GetSoftwareVersion(
+            ctypes.byref(eprom),
+            ctypes.byref(cofFile),
+            ctypes.byref(vxdRev),
+            ctypes.byref(vxdVer),
+            ctypes.byref(dllRev),
+            ctypes.byref(dllVer),
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return (
+            eprom.value,
+            cofFile.value,
+            vxdRev.value,
+            vxdVer.value,
+            dllRev.value,
+            dllVer.value,
+        )
+
+    def GetHardwareVersion(self) -> str:
+
+        pcbVer = ctypes.c_int()
+        decodeVer = ctypes.c_int()
+        dummy1 = ctypes.c_int()
+        dummy2 = ctypes.c_int()
+        camFirmVer = ctypes.c_int()
+        camFirmBuild = ctypes.c_int()
+
+        err_code = self.__libandor__.GetHardwareVersion(
+            ctypes.byref(pcbVer),
+            ctypes.byref(decodeVer),
+            ctypes.byref(dummy1),
+            ctypes.byref(dummy2),
+            ctypes.byref(camFirmVer),
+            ctypes.byref(camFirmBuild),
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return (
+            pcbVer.value,
+            decodeVer.value,
+            dummy1.value,
+            dummy2.value,
+            camFirmVer.value,
+            camFirmBuild.value,
+        )
 
     ## Setters
 
@@ -888,6 +972,9 @@ class AndorCamera:
         )
         info.xpixels, info.ypixels = self.GetDetector()
 
+        info.software_version = SoftwareVersion(*self.GetSoftwareVersion())
+        info.hardware_version = HardwareVersion(*self.GetHardwareVersion())
+
         self.info = info
 
 
@@ -913,5 +1000,7 @@ if __name__ == "__main__":
 
     camera.SetRandomTracks(1, areas=[1, 25])
 
-    print(settings_)
+    print(info_.software_version)
+    print(info_.hardware_version)
+
     camera.disconnect()
