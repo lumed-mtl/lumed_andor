@@ -530,7 +530,6 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
     def plot_acquisition_results(self):
 
         logger.info("Test Acquisition completed - Plotting results")
-        logger.info(tomli_w.dumps(asdict(self.current_acquisition.result)))
 
         result = self.current_acquisition.result
         data = result.data
