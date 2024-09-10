@@ -18,7 +18,6 @@ def import_setting(filepath: Path) -> AndorSettings:
     with open(filepath, "rb") as fp:
         setting_dict = tomli.load(fp)["andor_setting"]
 
-    print(setting_dict)
     andor_setting = from_dict(data_class=AndorSettings, data=setting_dict)
     return andor_setting
 
