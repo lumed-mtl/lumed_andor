@@ -914,10 +914,12 @@ class AndorCamera:
 
         self.get_info()
         self.apply_default_settings()
+        self.CoolerOn()
         self.get_info()
 
     def disconnect(self) -> None:
         self.apply_default_settings()
+        self.CoolerOFF()
         self.get_info()
         self.ShutDown()
 
