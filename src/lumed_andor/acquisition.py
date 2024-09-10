@@ -78,14 +78,15 @@ class AndorAcquisition(QRunnable):
                 msg = "ACQUISITION ABORTED"
             else:
                 msg = last_error.message
-            logger.info(
-                "Completed accumulation %i of %i - %s", n_completed, n_scans, msg
-            )
 
             if self.camera.GetStatus().code != ACQUIRING_CODE:
                 continue
             else:
                 self.camera.WaitForAcquisition()
+
+            logger.info(
+                "Completed accumulation %i of %i - %s", n_completed + 1, n_scans, msg
+            )
 
     def get_camera_info(self):
         self.camera.get_info()
@@ -110,10 +111,10 @@ class AndorAcquisition(QRunnable):
         if read_mode == 0:  # FVB
             width = camera_info.xpixels
             height = 1
-        elif read_mode == 1:  # Multi-Track TODO
+        elif read_mode == 1:  # Multi-Track
             width = camera_info.xpixels
             height = camera_settings.multi_track.number
-        elif read_mode == 2:  # Random-Track TODO
+        elif read_mode == 2:  # Random-Track
             width = camera_info.xpixels
             height = len(camera_settings.random_track.tracks) // 2
         elif read_mode == 3:  # Single-Track
