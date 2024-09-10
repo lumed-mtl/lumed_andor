@@ -21,7 +21,7 @@ if __name__ == "__main__":
     terminal_handler = logging.StreamHandler()
     terminal_handler.setFormatter(formatter)
     logger.addHandler(terminal_handler)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     app = QApplication(sys.argv)
     window = QMainWindow()
