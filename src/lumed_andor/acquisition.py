@@ -1,10 +1,16 @@
 import logging
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
 from PyQt5.QtCore import QObject, QRunnable, pyqtSignal, pyqtSlot
 
-from lumed_andor.andor_control import AndorCamera, AndorInfo, AndorSettings
+from lumed_andor.andor_control import (
+    ACQUIRING_CODE,
+    AndorCamera,
+    AndorInfo,
+    AndorSettings,
+)
 
 logger = logging.getLogger()
 
@@ -63,18 +69,23 @@ class AndorAcquisition(QRunnable):
 
         n_scans = self.n_scans
 
-        for i in range(n_scans):
-            self.signals.progress.emit(i / n_scans)
-            self.camera.get_info()
-            self.camera.WaitForAcquisition()
-            self.acquisition_progress = self.acquisition_progress + 1
+        for _ in range(n_scans):
+            _, n_completed = self.camera.GetAcquisitionProgress()
+            self.signals.progress.emit(n_completed / n_scans)
 
             last_error = self.camera.last_error
             if not last_error.is_success:
                 msg = "ACQUISITION ABORTED"
             else:
                 msg = last_error.message
-            logger.info("Completed accumulation %i of %i - %s", i + 1, n_scans, msg)
+            logger.info(
+                "Completed accumulation %i of %i - %s", n_completed, n_scans, msg
+            )
+
+            if self.camera.GetStatus().code != ACQUIRING_CODE:
+                continue
+            else:
+                self.camera.WaitForAcquisition()
 
     def get_camera_info(self):
         self.camera.get_info()
