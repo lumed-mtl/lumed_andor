@@ -241,7 +241,7 @@ class AndorInfo:
 
     # Camera (fixed) properties
     model: str = ""
-    serial_number: str = ""
+    serial_number: int = 0
     max_temperature: int = 0
     min_temperature: int = 0
     xpixels: int = 0
