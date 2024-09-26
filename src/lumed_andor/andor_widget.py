@@ -177,8 +177,12 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         self.labelCameraStatus.setText(self.camera.info.status.message)
         self.labelCurrentTemperature.setText(str(self.camera.info.temperature))
         self.labelCoolingStatus.setText(self.camera.info.cooling_status)
-        self.spinBoxTargetExposureTime.setValue(int(self.camera.target_exposure_time))
-        self.spinBoxTargetTemperature.setValue(int(self.camera.target_temperature))
+        if not self.spinBoxTargetExposureTime.hasFocus():
+            self.spinBoxTargetExposureTime.setValue(
+                int(self.camera.target_exposure_time)
+            )
+        if not self.spinBoxTargetTemperature.hasFocus():
+            self.spinBoxTargetTemperature.setValue(int(self.camera.target_temperature))
 
         # Acquisition Mode Box
         if not self.comboBoxAcquisitionMode.hasFocus():
