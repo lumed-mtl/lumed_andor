@@ -291,7 +291,6 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         self.threadpool.start(worker)
 
     def post_camera_connection(self):
-        print("post connection")
         error = self.camera.last_error
         if error.is_success:
             logger.info(
@@ -300,7 +299,6 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
                 error.message,
             )
             self.set_control_bounds()
-            print("after control bounds")
             self.update_timer.start()
         self.update_ui()
 
