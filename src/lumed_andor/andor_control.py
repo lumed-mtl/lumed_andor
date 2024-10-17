@@ -1,11 +1,11 @@
 import ctypes
+import importlib.metadata
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Tuple
+from threading import Lock
 
-import numpy as np
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 READ_MODES = {
     0: "Full Vertical Binning",
@@ -22,6 +22,7 @@ ACQUISITION_MODES = {
     4: "Fast Kinetics",
     5: "Run till abort",
 }
+
 
 ANDOR_CODES = {
     20001: "DRV_ERROR_CODES",
@@ -149,6 +150,128 @@ ANDOR_CODES = {
 }
 
 SUCCESS_CODE = 20002
+ACQUIRING_CODE = 20072
+
+
+@dataclass
+class SoftwareVersion:
+    eeprom: int = 0
+    cofFile: int = 0
+    vxdRev: int = 0
+    vxdVer: int = 0
+    dllRev: int = 0
+    dllVer: int = 0
+    lumed_andor: str = importlib.metadata.version("lumed_andor")
+
+
+@dataclass
+class HardwareVersion:
+    pcb: int = 0
+    decode: int = 0
+    dummy1: int = 0
+    dummy2: int = 0
+    firmware_version: int = 0
+    firmware_build: int = 0
+
+
+@dataclass
+class AndorError:
+    code: int = SUCCESS_CODE
+
+    @property
+    def is_success(self) -> bool:
+        return self.code == SUCCESS_CODE
+
+    @property
+    def message(self) -> str:
+        return ANDOR_CODES[self.code]
+
+
+@dataclass(kw_only=True)
+class ImageConfig:
+    hbin: int = 1
+    vbin: int = 1
+    hstart: int = 1
+    hend: int = 1
+    vstart: int = 1
+    vend: int = 1
+
+
+@dataclass(kw_only=True)
+class ShutterSettings:
+    ttl_type: int = 1
+    mode: int = 0
+    closing_time: int = 0
+    opening_time: int = 0
+
+
+@dataclass(kw_only=True)
+class SingleTrack:
+    center: int = 1
+    height: int = 1
+
+
+@dataclass(kw_only=True)
+class MultiTrack:
+    number: int = 1
+    height: int = 1
+    offset: int = 0
+    bottom: int = 0
+    gap: int = 0
+
+
+@dataclass(kw_only=True)
+class RandomTrack:
+    hbin: int = 1
+    tracks: list = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
+class AndorInfo:
+    # Basic confing
+    is_connected: bool = False
+    status: AndorError = field(default_factory=AndorError)
+    temperature: int = 0
+    is_cooler_on: int = False
+    cooling_status: str = ""
+
+    exposure_time: float = float("nan")  # [ms]
+    accumulate_cycle: float = float("nan")  # [ms]
+    kinetic_cycle: float = float("nan")  # [ms]
+
+    # Camera (fixed) properties
+    model: str = ""
+    serial_number: int = 0
+    max_temperature: int = 0
+    min_temperature: int = 0
+    xpixels: int = 0
+    ypixels: int = 0
+
+    software_version: SoftwareVersion = field(default_factory=SoftwareVersion)
+    hardware_version: HardwareVersion = field(default_factory=HardwareVersion)
+
+
+@dataclass(kw_only=True)
+class AndorSettings:
+    # basic settings
+    target_exposure_time: int = 0
+    acquisition_mode: int = 1
+    read_mode: int = 0
+    target_temperature: int = 0
+
+    # Normal settings
+    number_kinetic: int = 1
+    number_accumulation: int = 1
+    target_accumulation_time: int = 0
+    target_kinetic_time: int = 0
+    multi_track: MultiTrack = field(default_factory=MultiTrack)
+    random_track: RandomTrack = field(default_factory=RandomTrack)
+    single_track: SingleTrack = field(default_factory=SingleTrack)
+    image_config: ImageConfig = field(default_factory=ImageConfig)
+
+    # Advanced settings
+    shutter_profile: ShutterSettings = field(default_factory=ShutterSettings)
+    trigger_mode: int = 0
 
 
 class AndorCamera:
@@ -158,43 +281,69 @@ class AndorCamera:
         self.__libandor__ = ctypes.cdll.LoadLibrary(lib_path)
 
         # Internal parameter references
-        self.status: str = ""
-        self.temperature: float = 0
-        self.target_temperature: float = 0
-        self.cooling_status: str = ""
-        self.exposure_time: float = 0
-        self.accumulate_time: float = 0
-        self.kinetic_time: float = 0
-        self.hbin: float = 0
-        self.vbin: float = 0
-        self.hstart: float = 0
-        self.vstart: float = 0
-        self.hend: float = 0
-        self.vend: float = 0
-        self.read_mode: int = 0
-        self.acquisition_mode: int = 0
-        self.n_kinetic: int = 1
-        self.n_accumulation: int = 0
-        self.temperature_min: int = 0
-        self.temperature_max: int = 0
+        self._mutex: Lock = Lock()
         self.is_connected: bool = False
+        self.last_error: AndorError = AndorError()
+
+        self.acquisition_mode: int = 0
+        self.read_mode: int = 0
+        self.shutter_settings: ShutterSettings = ShutterSettings()
+        self.trigger_mode: int = 0
+        self.target_exposure_time: int = 0
+        self.target_accumulation_time: int = 0
+        self.target_kinetic_time: int = 0
+        self.number_accumulation: int = 0
+        self.number_kinetics: int = 0
+        self.image_config: ImageConfig = ImageConfig()
+        self.target_temperature: int = 0
+        self.single_track: SingleTrack = SingleTrack()
+        self.multi_track: MultiTrack = MultiTrack()
+        self.random_track: RandomTrack = RandomTrack()
+
+        self.info: AndorInfo = AndorInfo()
+
+    ## Safe library call (for not threadsafe processes)
+    def _safelibcall(self, fn, *args, **kwargs):
+
+        with self._mutex:
+            try:
+                results = fn(*args, **kwargs)
+            except Exception as e:
+                logger.error(e)
+
+        return results
 
     ## Wrapping methods from SDK
 
-    def CancelWait(self):
-        err_code = self.__libandor__.CancelWait()
-        return ANDOR_CODES[err_code]
+    ## Getters
 
-    def GetAvailableCameras(self) -> Tuple[int, str]:
+    def GetAvailableCameras(self) -> int:
         """
         GetAvailableCameras returns the total number of Andor cameras currently installed. It is
         possible to call this function before any of the cameras are initialized.
         """
         totalCameras = ctypes.c_long()
-        err_code = self.__libandor__.GetAvailableCameras(ctypes.byref(totalCameras))
-        return totalCameras.value, ANDOR_CODES[err_code]
+        err_code = self._safelibcall(
+            self.__libandor__.GetAvailableCameras, ctypes.byref(totalCameras)
+        )
 
-    def GetTemperature(self) -> Tuple[float, str]:
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(totalCameras.value)
+
+    def GetCameraSerialNumber(self) -> int:
+        serial_number = ctypes.c_int()
+        err_code = self._safelibcall(
+            self.__libandor__.GetCameraSerialNumber, ctypes.byref(serial_number)
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(serial_number.value)
+
+    def GetTemperature(self) -> int:
         """
         GetTemperature This function returns the temperature of the detector to the nearest degree.
         It also gives the status of cooling process.
@@ -202,7 +351,7 @@ class AndorCamera:
 
         Returns
         -------
-        Tuple[float, str]
+        tuple[float, str]
             TemperatureCamera
 
             Andor errror code, possible values
@@ -216,432 +365,703 @@ class AndorCamera:
                 DRV_TEMP_NOT_STABILIZED : Temperature reached but not stabilized
         """
         temp = ctypes.c_int()
-        err_code = self.__libandor__.GetTemperature(ctypes.byref(temp))
-        self.temperature = temp.value
-        self.cooling_status = ANDOR_CODES[err_code]
-        return temp.value, ANDOR_CODES[err_code]
-
-    def GetNumberVSSpeeds(self):
-        speeds = ctypes.c_int()
-        err_code = self.__libandor__.GetNumberVSSpeeds(ctypes.byref(speeds))
-        return speeds.value, ANDOR_CODES[err_code]
-
-    def GetHSSpeed(self):
-        speed = ctypes.c_float()
-        err_code = self.__libandor__.GetHSSpeed(0, 0, 0, ctypes.byref(speed))
-        return speed.value, ANDOR_CODES[err_code]
-
-    def GetVSSpeed(self):
-        speed = ctypes.c_float()
-        err_code = self.__libandor__.GetVSSpeed(0, ctypes.byref(speed))
-        return speed.value, ANDOR_CODES[err_code]
-
-    def GetAcquisitionTimings(self):
-        exposure = ctypes.c_float()
-        accumulate = ctypes.c_float()
-        kinetic = ctypes.c_float()
-        err_code = self.__libandor__.GetAcquisitionTimings(
-            ctypes.byref(exposure), ctypes.byref(accumulate), ctypes.byref(kinetic)
+        err_code = self._safelibcall(
+            self.__libandor__.GetTemperature, ctypes.byref(temp)
         )
-        exposure = 1000 * exposure.value
-        accumulate = 1000 * accumulate.value
-        kinetic = 1000 * kinetic.value
-        if err_code == SUCCESS_CODE:
-            self.exposure_time = exposure
-            self.accumulate_time = accumulate
-            self.kinetic_time = kinetic
-        return exposure, accumulate, kinetic, ANDOR_CODES[err_code]
 
-    def GetDetector(self):
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(temp.value)
+
+    def GetNumberHSSpeeds(self) -> int:
+        channel = ctypes.c_int(0)
+        _type = ctypes.c_int()
+        speeds = ctypes.c_int()
+        err_code = self._safelibcall(
+            self.__libandor__.GetNumberHSSpeeds,
+            channel,
+            ctypes.byref(_type),
+            ctypes.byref(speeds),
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(speeds.value)
+
+    def GetNumberVSSpeeds(self) -> int:
+        speeds = ctypes.c_int()
+        err_code = self._safelibcall(
+            self.__libandor__.GetNumberVSSpeeds, ctypes.byref(speeds)
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(speeds.value)
+
+    def GetHSSpeed(self) -> float:
+        speed = ctypes.c_float()
+        err_code = self._safelibcall(
+            self.__libandor__.GetHSSpeed, 0, 0, 0, ctypes.byref(speed)
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return float(speed.value)
+
+    def GetVSSpeed(self) -> float:
+        speed = ctypes.c_float()
+        err_code = self._safelibcall(
+            self.__libandor__.GetVSSpeed, 0, ctypes.byref(speed)
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return float(speed.value)
+
+    def GetAcquisitionTimings(self) -> tuple[float, float, float]:
+        exposure_time = ctypes.c_float()
+        accumulate_cycle = ctypes.c_float()
+        kinetic_cycle = ctypes.c_float()
+
+        err_code = self._safelibcall(
+            self.__libandor__.GetAcquisitionTimings,
+            ctypes.byref(exposure_time),
+            ctypes.byref(accumulate_cycle),
+            ctypes.byref(kinetic_cycle),
+        )
+
+        exposure_time = 1000 * float(exposure_time.value)
+        accumulate_cycle = 1000 * float(accumulate_cycle.value)
+        kinetic_cycle = 1000 * float(kinetic_cycle.value)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return exposure_time, accumulate_cycle, kinetic_cycle
+
+    def GetDetector(self) -> tuple[int, int]:
         """Returns Detector Size of the camera in a tuple
 
         Return format : (xpixel:int, ypixel:int)
         """
         xpixel = ctypes.c_int()
         ypixel = ctypes.c_int()
-        err_code = self.__libandor__.GetDetector(
-            ctypes.byref(xpixel), ctypes.byref(ypixel)
+        err_code = self._safelibcall(
+            self.__libandor__.GetDetector, ctypes.byref(xpixel), ctypes.byref(ypixel)
         )
-        return xpixel.value, ypixel.value, ANDOR_CODES[err_code]
 
-    def GetNumberHSSpeeds(self):
-        channel = ctypes.c_int(0)
-        typ = ctypes.c_int()
-        speeds = ctypes.c_int()
-        err_code = self.__libandor__.GetNumberHSSpeeds(
-            channel, ctypes.byref(typ), ctypes.byref(speeds)
-        )
-        return typ.value, speeds.value, ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def GetTemperatureRange(self):
+        return int(xpixel.value), int(ypixel.value)
+
+    def GetTemperatureRange(self) -> tuple[int, int]:
         minTemp = ctypes.c_int()
         maxTemp = ctypes.c_int()
-        err_code = self.__libandor__.GetTemperatureRange(
-            ctypes.byref(minTemp), ctypes.byref(maxTemp)
+        err_code = self._safelibcall(
+            self.__libandor__.GetTemperatureRange,
+            ctypes.byref(minTemp),
+            ctypes.byref(maxTemp),
         )
-        if err_code == SUCCESS_CODE:
-            self.temperature_max = int(maxTemp.value)
-            self.temperature_min = int(minTemp.value)
 
-        return minTemp.value, maxTemp.value, ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def GetStatus(self):
+        return int(minTemp.value), int(maxTemp.value)
+
+    def GetStatus(self) -> AndorError:
         status = ctypes.c_int()
-        err_code = self.__libandor__.GetStatus(ctypes.byref(status))
-        if err_code == SUCCESS_CODE:
-            status = ANDOR_CODES[int(status.value)]
-            self.status = status
-        else:
-            status = ANDOR_CODES[err_code]
-        return status, ANDOR_CODES[err_code]
+        err_code = self._safelibcall(self.__libandor__.GetStatus, ctypes.byref(status))
 
-    def IsCoolerOn(self):
-        iCoolerStatus = ctypes.c_int()
-        err_code = self.__libandor__.IsCoolerOn(ctypes.byref(iCoolerStatus))
-        return iCoolerStatus.value, ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def GetAcquisitionProgress(self):
+        if err_code == 20075:  # DRV_NOT_INITIALIZED
+            return AndorError(err_code)
+
+        return AndorError(status.value)
+
+    def IsCoolerOn(self) -> bool:
+        cooler_on = ctypes.c_int()
+        err_code = self._safelibcall(
+            self.__libandor__.IsCoolerOn, ctypes.byref(cooler_on)
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return cooler_on.value == 1
+
+    def GetAcquisitionProgress(self) -> tuple[int, int]:
         acc = ctypes.c_int()
         series = ctypes.c_int()
-        err_code = self.__libandor__.GetAcquisitionProgress(
-            ctypes.byref(acc), ctypes.byref(series)
+        err_code = self._safelibcall(
+            self.__libandor__.GetAcquisitionProgress,
+            ctypes.byref(acc),
+            ctypes.byref(series),
         )
-        return acc.value, series.value, ANDOR_CODES[err_code]
 
-    def GetHeadModel(self):
-        name = ctypes.create_string_buffer(100)
-        err_code = self.__libandor__.GetHeadModel(name)
-        return name.value.decode(), ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(acc.value), int(series.value)
+
+    def GetHeadModel(self) -> str:
+        name = ctypes.create_string_buffer(260)
+        err_code = self._safelibcall(self.__libandor__.GetHeadModel, name)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return str(name.value.decode())
 
     def GetAcquiredData(self, size):
         InArray = (ctypes.c_int * size)()
         size = ctypes.c_int(size)
-        err_code = self.__libandor__.GetAcquiredData((InArray), size)
-        return InArray, ANDOR_CODES[err_code]
+        err_code = self._safelibcall(self.__libandor__.GetAcquiredData, (InArray), size)
 
-    def GetNumberPreAmpGains(self):
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return InArray
+
+    def GetNumberPreAmpGains(self) -> int:
         nGain = ctypes.c_int()
-        err_code = self.__libandor__.GetNumberPreAmpGains(ctypes.byref(nGain))
-        return nGain.value, ANDOR_CODES[err_code]
+        err_code = self._safelibcall(
+            self.__libandor__.GetNumberPreAmpGains, ctypes.byref(nGain)
+        )
 
-    def GetCurrentPreAmpGain(self):
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(nGain.value)
+
+    def GetCurrentPreAmpGain(self) -> tuple[int, str]:
         gainIndex = ctypes.c_int()
         gainstr = ctypes.create_string_buffer(30)
-        err_code = self.__libandor__.GetCurrentPreAmpGain(
-            gainIndex, ctypes.byref(gainstr)
+        err_code = self._safelibcall(
+            self.__libandor__.GetCurrentPreAmpGain, gainIndex, ctypes.byref(gainstr)
         )
-        return gainIndex.value, gainstr.value.decode("utf-8"), ANDOR_CODES[err_code]
 
-    def GetPreAmpGain(self):
-        gainFactor = ctypes.c_int()
-        err_code = self.__libandor__.GetPreAmpGain(0, ctypes.byref(gainFactor))
-        return gainFactor.value, ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return int(gainIndex.value), str(gainstr.value.decode("utf-8"))
+
+    def GetPreAmpGain(self, gain_index=0) -> float:
+        gain_index = ctypes.c_int(gain_index)
+        gain_factor = ctypes.c_float()
+        err_code = self._safelibcall(
+            self.__libandor__.GetPreAmpGain, gain_index, ctypes.byref(gain_factor)
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return float(gain_factor.value)
+
+    def GetSoftwareVersion(self) -> list[int, int, int, int, int, int]:
+        eprom = ctypes.c_int()
+        cofFile = ctypes.c_int()
+        vxdRev = ctypes.c_int()
+        vxdVer = ctypes.c_int()
+        dllRev = ctypes.c_int()
+        dllVer = ctypes.c_int()
+
+        err_code = self._safelibcall(
+            self.__libandor__.GetSoftwareVersion,
+            ctypes.byref(eprom),
+            ctypes.byref(cofFile),
+            ctypes.byref(vxdRev),
+            ctypes.byref(vxdVer),
+            ctypes.byref(dllRev),
+            ctypes.byref(dllVer),
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return (
+            eprom.value,
+            cofFile.value,
+            vxdRev.value,
+            vxdVer.value,
+            dllRev.value,
+            dllVer.value,
+        )
+
+    def GetHardwareVersion(self) -> str:
+
+        pcbVer = ctypes.c_int()
+        decodeVer = ctypes.c_int()
+        dummy1 = ctypes.c_int()
+        dummy2 = ctypes.c_int()
+        camFirmVer = ctypes.c_int()
+        camFirmBuild = ctypes.c_int()
+
+        err_code = self._safelibcall(
+            self.__libandor__.GetHardwareVersion,
+            ctypes.byref(pcbVer),
+            ctypes.byref(decodeVer),
+            ctypes.byref(dummy1),
+            ctypes.byref(dummy2),
+            ctypes.byref(camFirmVer),
+            ctypes.byref(camFirmBuild),
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+        return (
+            pcbVer.value,
+            decodeVer.value,
+            dummy1.value,
+            dummy2.value,
+            camFirmVer.value,
+            camFirmBuild.value,
+        )
 
     ## Setters
 
-    def SetAcquisitionMode(self, mode):
-        mode = mode + 1  # Weird choice, acquisition mode starts at 1...
-        err_code = self.__libandor__.SetAcquisitionMode(mode)
+    def SetAcquisitionMode(self, mode: int) -> None:
+        err_code = self._safelibcall(self.__libandor__.SetAcquisitionMode, mode)
+
         if err_code == SUCCESS_CODE:
             self.acquisition_mode = mode
-        return ANDOR_CODES[err_code]
 
-    def SetReadMode(self, mode):
-        err_code = self.__libandor__.SetReadMode(mode)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetReadMode(self, mode: int) -> None:
+        err_code = self._safelibcall(self.__libandor__.SetReadMode, mode)
+
         if err_code == SUCCESS_CODE:
             self.read_mode = mode
-        return ANDOR_CODES[err_code]
 
-    def SetShutter(self, TTLtype, mode, closingtime, openingtime):
-        err_code = self.__libandor__.SetShutter(TTLtype, mode, closingtime, openingtime)
-        return ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetExposureTime(self, time_ms):
-        time_s = ctypes.c_float(time_ms / 1000)
-        err_code = self.__libandor__.SetExposureTime(time_s)
-        if err_code == SUCCESS_CODE:
-            self.exposure_time = time_ms
-        return ANDOR_CODES[err_code]
-
-    def SetTriggerMode(self, mode):
-        err_code = self.__libandor__.SetTriggerMode(mode)
-        return ANDOR_CODES[err_code]
-
-    def SetAccumulationCycleTime(self, time_ms):
-        time_s = ctypes.c_float(time_ms / 1000)
-        err_code = self.__libandor__.SetAccumulationCycleTime(time_s)
-        return ANDOR_CODES[err_code]
-
-    def SetNumberAccumulations(self, number):
-        number = ctypes.c_int(number)
-        err_code = self.__libandor__.SetNumberAccumulations(number)
-        if err_code == SUCCESS_CODE:
-            self.n_accumulation = int(number)
-        return ANDOR_CODES[err_code]
-
-    def SetNumberKinetics(self, number):
-        number = ctypes.c_int(number)
-        err_code = self.__libandor__.SetNumberKinetics(number)
-        if err_code == SUCCESS_CODE:
-            self.n_kinetic = number.value
-        return ANDOR_CODES[err_code]
-
-    def SetKineticCycleTime(self, cycle_time):
-        err_code = self.__libandor__.SetKineticCycleTime(
-            ctypes.c_float(cycle_time / 1000)
+    def SetShutter(
+        self,
+        TTLtype: int,
+        mode: int,
+        closing_time: int,
+        opening_time: int,
+    ) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.SetShutter, TTLtype, mode, closing_time, opening_time
         )
+
         if err_code == SUCCESS_CODE:
-            self.kinetic_time = cycle_time
-        return ANDOR_CODES[err_code]
+            self.shutter_settings = ShutterSettings(
+                ttl_type=TTLtype,
+                mode=mode,
+                closing_time=closing_time,
+                opening_time=opening_time,
+            )
 
-    def SetHSSpeed(self, amp, index):
-        amp = ctypes.c_int(amp)
-        index = ctypes.c_int(index)
-        err_code = self.__libandor__.SetHSSpeed(amp, index)
-        return ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetVSSpeed(self, index):
+    def SetExposureTime(self, time_ms: int) -> None:
+        time_s = ctypes.c_float(time_ms / 1000)
+        err_code = self._safelibcall(self.__libandor__.SetExposureTime, time_s)
+
+        if err_code == SUCCESS_CODE:
+            self.target_exposure_time = time_ms
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetTriggerMode(self, mode: int) -> None:
+        err_code = self._safelibcall(self.__libandor__.SetTriggerMode, mode)
+
+        if err_code == SUCCESS_CODE:
+            self.trigger_mode = mode
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetAccumulationCycleTime(self, time_ms: int) -> None:
+        time_s = ctypes.c_float(time_ms / 1000)
+        err_code = self._safelibcall(self.__libandor__.SetAccumulationCycleTime, time_s)
+
+        if err_code == SUCCESS_CODE:
+            self.target_accumulation_time = time_ms
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetNumberAccumulations(self, n_accumulations: int) -> None:
+        n = ctypes.c_int(n_accumulations)
+        err_code = self._safelibcall(self.__libandor__.SetNumberAccumulations, n)
+
+        if err_code == SUCCESS_CODE:
+            self.number_accumulation = n_accumulations
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetNumberKinetics(self, n_kinetics: int) -> None:
+        n = ctypes.c_int(n_kinetics)
+        err_code = self._safelibcall(self.__libandor__.SetNumberKinetics, n)
+
+        if err_code == SUCCESS_CODE:
+            self.number_kinetics = n_kinetics
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetKineticCycleTime(self, time_ms: int) -> None:
+        time_s = ctypes.c_float(time_ms / 1000)
+        err_code = self._safelibcall(self.__libandor__.SetKineticCycleTime, time_s)
+
+        if err_code == SUCCESS_CODE:
+            self.target_kinetic_time = time_ms
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetHSSpeed(self, typ: int, index: int) -> None:
+        amp = ctypes.c_int(typ)
         index = ctypes.c_int(index)
-        err_code = self.__libandor__.SetVSSpeed(index)
-        return ANDOR_CODES[err_code]
+        err_code = self._safelibcall(self.__libandor__.SetHSSpeed, amp, index)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetVSSpeed(self, index: int) -> None:
+        index = ctypes.c_int(index)
+        err_code = self._safelibcall(self.__libandor__.SetVSSpeed, index)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetImage(
         self, hbin: int, vbin: int, hstart: int, hend: int, vstart: int, vend: int
-    ):
+    ) -> None:
         hbin = ctypes.c_int(hbin)
         vbin = ctypes.c_int(vbin)
         hstart = ctypes.c_int(hstart)
         hend = ctypes.c_int(hend)
         vstart = ctypes.c_int(vstart)
         vend = ctypes.c_int(vend)
-        err_code = self.__libandor__.SetImage(hbin, vbin, hstart, hend, vstart, vend)
-        if err_code == SUCCESS_CODE:
-            self.hbin = int(hbin.value)
-            self.vbin = int(vbin.value)
-            self.hstart = int(hstart.value)
-            self.vstart = int(vstart.value)
-            self.hend = int(hend.value)
-            self.vend = int(vend.value)
-        return ANDOR_CODES[err_code]
+        err_code = self._safelibcall(
+            self.__libandor__.SetImage, hbin, vbin, hstart, hend, vstart, vend
+        )
 
-    def SetTemperature(self, temperature):
-        temperature = ctypes.c_int(temperature)
-        err_code = self.__libandor__.SetTemperature(temperature)
         if err_code == SUCCESS_CODE:
-            self.target_temperature = temperature.value
-        return ANDOR_CODES[err_code]
+            self.image_config = ImageConfig(
+                hbin=hbin.value,
+                vbin=vbin.value,
+                hstart=hstart.value,
+                vstart=vstart.value,
+                hend=hend.value,
+                vend=vend.value,
+            )
 
-    def SetSingleTrack(self, center, height):
-        center = ctypes.c_int(center)
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetTemperature(self, temperature: int) -> None:
+        t = ctypes.c_int(temperature)
+        err_code = self._safelibcall(self.__libandor__.SetTemperature, t)
+
+        if err_code == SUCCESS_CODE:
+            self.target_temperature = temperature
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetMultiTrack(self, number: int, height: int, offset: int) -> None:
+        number = ctypes.c_int(number)
         height = ctypes.c_int(height)
-        err_code = self.__libandor__.SetSingleTrack(center, height)
-        return ANDOR_CODES[err_code]
+        offset = ctypes.c_int(offset)
+        bottom = ctypes.c_int()
+        gap = ctypes.c_int()
+        err_core = self._safelibcall(
+            self.__libandor__.SetMultiTrack,
+            number,
+            height,
+            offset,
+            ctypes.byref(bottom),
+            ctypes.byref(gap),
+        )
+        if err_core == SUCCESS_CODE:
+            self.multi_track = MultiTrack(
+                number=number.value,
+                height=height.value,
+                offset=offset.value,
+                bottom=bottom.value,
+                gap=gap.value,
+            )
 
-    def SetPreAmpGain(self, gainIndex):
+        self.last_error = AndorError(err_core)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetRandomTracks(self, numTracks: int, areas: int) -> None:
+        numTracks = ctypes.c_int(numTracks)
+        c_areas = ctypes.c_int * len(areas)
+        c_areas = c_areas(*areas)
+
+        err_code = self._safelibcall(
+            self.__libandor__.SetRandomTracks, numTracks, ctypes.byref(c_areas)
+        )
+        if err_code == SUCCESS_CODE:
+            self.random_track = RandomTrack(tracks=areas)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetSingleTrack(self, center: int, height: int) -> None:
+        c = ctypes.c_int(center)
+        h = ctypes.c_int(height)
+        err_code = self._safelibcall(self.__libandor__.SetSingleTrack, c, h)
+
+        if err_code == SUCCESS_CODE:
+            self.single_track = SingleTrack(center=center, height=height)
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def SetPreAmpGain(self, gainIndex: int) -> None:
         gain = ctypes.c_int(gainIndex)
-        err_code = self.__libandor__.SetPreAmpGain((gain))
-        return ANDOR_CODES[err_code]
+        err_code = self._safelibcall(self.__libandor__.SetPreAmpGain, (gain))
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     ## Camera actions
 
-    def AbortAcquisition(self):
-        err_code = self.__libandor__.AbortAcquisition()
-        return ANDOR_CODES[err_code]
+    def AbortAcquisition(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.AbortAcquisition,
+        )
 
-    def CoolerOn(self):
-        err_code = self.__libandor__.CoolerON()
-        return ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def CoolerOFF(self):
-        err_code = self.__libandor__.CoolerOFF()
-        return ANDOR_CODES[err_code]
+    def CancelWait(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.CancelWait,
+        )
 
-    def Initialize(self):
-        err_code = self.__libandor__.Initialize("/usr/local/etc/andor".encode("utf8"))
-        error = ANDOR_CODES[err_code]
-        return error
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def StartAcquisition(self):
-        err_code = self.__libandor__.StartAcquisition()
-        return ANDOR_CODES[err_code]
+    def CoolerOn(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.CoolerON,
+        )
 
-    def WaitForAcquisition(self):
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def CoolerOFF(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.CoolerOFF,
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def Initialize(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.Initialize, "/usr/local/etc/andor".encode("utf8")
+        )
+
+        self.last_error = AndorError(err_code)
+        self.is_connected = self.last_error.is_success
+
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def StartAcquisition(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.StartAcquisition,
+        )
+
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
+
+    def WaitForAcquisition(self) -> None:
         err_code = self.__libandor__.WaitForAcquisition()
-        return ANDOR_CODES[err_code]
 
-    def ShutDown(self):
-        err_code = self.__libandor__.ShutDown()
-        return ANDOR_CODES[err_code]
+        self.last_error = AndorError(err_code)
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    ## Added methods for streamlining control of instruments
+    def ShutDown(self) -> None:
+        err_code = self._safelibcall(
+            self.__libandor__.ShutDown,
+        )
 
-    def connect(self) -> str:
-        n_camera_connected, error = self.GetAvailableCameras()
+        self.last_error = AndorError(err_code)
+        self.is_connected = not self.last_error.is_success
 
-        if n_camera_connected != 1:
-            return "No camera available"
+        logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-        error = self.Initialize()
+    ## compound methods
 
-        if error == "DRV_SUCCESS":
-            self.is_connected = True
+    def connect(self) -> None:
+        self.Initialize()
 
-        if self.is_connected:
-            self.update_info()
+        if not self.last_error.is_success:
+            return
 
-        return error
+        self.get_info()
+        self.apply_default_settings()
+        self.CoolerOn()
+        self.get_info()
 
-    def disconnect(self) -> str:
-        error = self.ShutDown()
+    def disconnect(self) -> None:
+        self.apply_default_settings()
+        self.CoolerOFF()
+        self.get_info()
+        self.ShutDown()
 
-        if error == "DRV_SUCCESS":
-            self.is_connected = False
-            self.status = "Disconnected"
+    def apply_default_settings(self) -> None:
+        default_settings = AndorSettings()
 
-        return error
+        # Temperature to max temp
+        default_settings.target_temperature = self.info.max_temperature
 
-    def update_info(self):
-        self.GetTemperature()
-        self.GetAcquisitionTimings()
-        self.GetStatus()
+        # Image config to camera sensor size
+        default_settings.image_config.hend = self.info.xpixels
+        default_settings.image_config.vend = self.info.ypixels
 
-    def get_info(self) -> dict:
-        info_dict = {}
+        # Single track to entire sensor size
+        default_settings.single_track.center = self.info.ypixels // 2
+        default_settings.single_track.height = self.info.ypixels // 2
 
-        info_dict["status"] = self.status
+        # Multi track to entire sensor size
+        default_settings.multi_track.number = 1
+        default_settings.multi_track.offset = 0
+        default_settings.multi_track.height = self.info.ypixels
 
-        info_dict["temperature"] = {
-            "cooling_status": self.cooling_status,
-            "current_temperature": self.temperature,
-            "target_temperature": self.target_temperature,
-        }
+        # Random track to entire sensor size
+        default_settings.random_track.tracks = [1, self.info.ypixels]
 
-        info_dict["timing"] = {
-            "exposure_time": self.exposure_time,
-            "accumulate_time": self.accumulate_time,
-            "kinetic_time": self.kinetic_time,
-        }
+        self.apply_settings(default_settings)
 
-        info_dict["acquisition_setting"] = {
-            "acquisition_mode": self.acquisition_mode,
-            "n_accumulation": self.n_accumulation,
-            "n_kinetic": self.n_kinetic,
-        }
+    def apply_settings(self, setting: AndorSettings) -> None:
 
-        info_dict["read_setting"] = {
-            "read_mode": self.read_mode,
-        }
+        # Basic settings
+        self.SetExposureTime(setting.target_exposure_time)
+        self.SetAcquisitionMode(setting.acquisition_mode)
+        self.SetReadMode(setting.read_mode)
+        self.SetTemperature(setting.target_temperature)
 
-        return info_dict
+        # Normal settings
+        self.SetNumberKinetics(setting.number_kinetic)
+        self.SetNumberAccumulations(setting.number_accumulation)
+        self.SetAccumulationCycleTime(setting.target_accumulation_time)
+        self.SetKineticCycleTime(setting.target_kinetic_time)
+        self.SetImage(
+            hbin=setting.image_config.hbin,
+            vbin=setting.image_config.vbin,
+            hstart=setting.image_config.hstart,
+            vstart=setting.image_config.vstart,
+            hend=setting.image_config.hend,
+            vend=setting.image_config.vend,
+        )
+        self.SetSingleTrack(
+            center=setting.single_track.center,
+            height=setting.single_track.height,
+        )
+        self.SetMultiTrack(
+            number=setting.multi_track.number,
+            height=setting.multi_track.height,
+            offset=setting.multi_track.offset,
+        )
+        self.SetRandomTracks(
+            numTracks=len(setting.random_track.tracks) // 2,
+            areas=setting.random_track.tracks,
+        )
 
+        # Advanced settings
+        self.SetShutter(
+            TTLtype=setting.shutter_profile.ttl_type,
+            mode=setting.shutter_profile.mode,
+            closing_time=setting.shutter_profile.closing_time,
+            opening_time=setting.shutter_profile.opening_time,
+        )
+        self.SetTriggerMode(setting.trigger_mode)
 
-class AndorAcquisition:
-    def __init__(self, camera: AndorCamera):
-        self.camera = camera
+    def get_settings(self) -> AndorSettings:
+        settings = AndorSettings()
 
-        # Get acquisition parameters from camera
-        self.read_mode = camera.read_mode
-        self.acquisition_mode = camera.acquisition_mode
-        self.width = camera.hend - camera.hstart + 1
-        self.height = camera.vend - camera.vstart + 1
-        self.n_kinetic = camera.n_kinetic
-        (
-            exposure,
-            accumulate,
-            kinetic,
-            _,
-        ) = camera.GetAcquisitionTimings()
-        self.valid_exposure = exposure
-        self.valid_accumulation = accumulate
-        self.valid_kinetic = kinetic
+        # Basic settings
+        settings.target_exposure_time = self.target_exposure_time
+        settings.acquisition_mode = self.acquisition_mode
+        settings.read_mode = self.read_mode
+        settings.target_temperature = self.target_temperature
 
-        self.data = None
-        self.acquisition_progress = 0
-        if self.acquisition_mode == 3:  # Kinetic
-            self.n_scans = self.n_kinetic
-        else:
-            self.n_scans = 1
+        # Normal settings
+        settings.number_kinetic = self.number_kinetics
+        settings.number_accumulation = self.number_accumulation
+        settings.target_accumulation_time = self.target_accumulation_time
+        settings.target_kinetic_time = self.target_kinetic_time
+        settings.image_config = self.image_config
+        settings.single_track = self.single_track
+        settings.multi_track = self.multi_track
+        settings.random_track = self.random_track
 
-    def take_acquisition(self):
-        logger.info("Starting acquisition")
-        self.camera.StartAcquisition()
-        self.camera.update_info()
-        self.acquisition_progress = 0
-        self.wait_for_acquisition()
-        self.get_acquired_data()
+        # Advanced settings
+        settings.shutter_profile = self.shutter_settings
+        settings.trigger_mode = self.trigger_mode
 
-    def wait_for_acquisition(self):
-        logger.info("Waiting for acquisition")
-        for i in range(self.n_scans):
-            self.acquisition_progress = i
-            msg = self.camera.WaitForAcquisition()
-            if msg != "DRV_SUCCESS":
-                msg = "ABORTED"
-            logger.info(
-                "Completed accumulation %i of %i - %s", i + 1, self.n_scans, msg
-            )
+        return settings
 
-    def abort_acquisition(self):
-        n_abort = self.n_scans - self.acquisition_progress
-        for _ in range(n_abort + 1):
-            self.camera.CancelWait()
-            self.camera.AbortAcquisition()
-            self.camera.update_info()
+    def get_info(self) -> None:
 
-    def get_acquired_data(self):
-        logger.info("Getting data from camera")
-        # get data
-        size = self.get_data_size()
-        self.data, _ = self.camera.GetAcquiredData(size)
+        info = AndorInfo()
 
-    def get_data_size(self):
-        if self.read_mode == 4:  # image mode
-            size = self.width * self.height
-        else:
-            size = self.width
+        info.is_connected = self.is_connected
+        info.status = self.GetStatus()
+        info.model = self.GetHeadModel()
+        info.serial_number = self.GetCameraSerialNumber()
+        info.min_temperature, info.max_temperature = self.GetTemperatureRange()
+        info.temperature = self.GetTemperature()
+        info.cooling_status = self.last_error.message
+        info.is_cooler_on = self.IsCoolerOn()
+        info.exposure_time, info.accumulate_cycle, info.kinetic_cycle = (
+            self.GetAcquisitionTimings()
+        )
+        info.xpixels, info.ypixels = self.GetDetector()
 
-        if self.acquisition_mode == 3:  # kinetic
-            size = size * self.n_kinetic
+        info.software_version = SoftwareVersion(*self.GetSoftwareVersion())
+        info.hardware_version = HardwareVersion(*self.GetHardwareVersion())
 
-        return size
-
-    def get_data(self):
-        if not self.data:
-            return None
-
-        data = np.array(self.data)
-
-        if self.read_mode == 4:  # image mode
-            if self.acquisition_mode == 3:  # kinetic series
-                # Reshape into [n_kinetic x (width*height)]
-                images = data.reshape(
-                    (self.n_kinetic, self.width * self.height), order="c"
-                )
-                data = []
-                for image in images:
-                    image = image.reshape((self.width, self.height), order="f")
-                    data.append(image)
-
-                data = np.stack(data)
-
-            else:
-                data = data.reshape((self.width, self.height), order="f")
-
-        else:
-            if self.camera.acquisition_mode == 3:
-                data = data.reshape((self.width, self.n_kinetic), order="f")
-                if self.n_kinetic > 1:
-                    data = data.T
-                else:
-                    data = data.flatten()
-
-        return data
+        self.info = info
 
 
 if __name__ == "__main__":
-    camera = AndorCamera()
-    print(camera.GetAvailableCameras())
-    print(camera.connect())
 
-    camera.get_info()
-    print(camera.disconnect())
+    LOG_FORMAT = (
+        "%(asctime)s - %(levelname)s"
+        "(%(filename)s:%(funcName)s)"
+        "(%(filename)s:%(lineno)d) - "
+        "%(message)s"
+    )
+    formatter = logging.Formatter(LOG_FORMAT)
+    terminal_handler = logging.StreamHandler()
+    terminal_handler.setFormatter(formatter)
+    logger.addHandler(terminal_handler)
+    logger.setLevel(logging.DEBUG)
+
+    camera = AndorCamera()
+    camera.connect()
+
+    info_ = camera.info
+    settings_ = camera.get_settings()
+
+    camera.SetRandomTracks(1, areas=[1, 25])
+
+    print(info_.software_version)
+    print(info_.hardware_version)
+
+    camera.disconnect()
