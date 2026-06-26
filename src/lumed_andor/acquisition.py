@@ -1,5 +1,4 @@
 import logging
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -29,7 +28,6 @@ class AcquisitionSignals(QObject):
 
 
 class AndorAcquisition(QRunnable):
-
     def __init__(self, camera: AndorCamera):
         super().__init__()
         self.camera: AndorCamera = camera

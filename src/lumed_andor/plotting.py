@@ -1,6 +1,8 @@
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 from lumed_andor.andor_control import MultiTrack, RandomTrack, SingleTrack
 
@@ -10,7 +12,7 @@ class AndorPlot:
         self.data = data
         self.n_figures = self.get_figure_number()
         self.is_image_plot: bool = self.data_is_image()
-        self.figures: list[plt.figure] = []
+        self.figures: list[Figure] = []
 
     def get_figure_number(self) -> int:
         n, y, _ = self.data.shape
@@ -29,7 +31,6 @@ class AndorPlot:
 
         self.figures = []
         for i in range(self.n_figures):
-
             if self.is_image_plot:
                 # Create figure
                 im = self.data[i, :, :]
@@ -47,7 +48,7 @@ class AndorPlot:
 
             self.figures.append(fig)
 
-    def plot_spectra(self, spectra) -> plt.figure:
+    def plot_spectra(self, spectra) -> Figure:
         fig = plt.figure()
         for spectrum in spectra:
             plt.plot(spectrum)
@@ -55,7 +56,7 @@ class AndorPlot:
 
         return fig
 
-    def plot_image(self, im, fig):
+    def plot_image(self, im, fig: Figure) -> None:
         nx, ny = im.shape
 
         # spacing for the axes
@@ -63,9 +64,9 @@ class AndorPlot:
         bottom, height = 0.1, 0.65
         spacing = 0
 
-        rect_im = [left, bottom, width, height]
-        rect_sumx = [left, bottom + height + spacing, width, 0.2]
-        rect_sumy = [left + width + spacing, bottom, 0.2, height]
+        rect_im = (left, bottom, width, height)
+        rect_sumx = (left, bottom + height + spacing, width, 0.2)
+        rect_sumy = (left + width + spacing, bottom, 0.2, height)
 
         # Add Axes
         ax_img = fig.add_axes(rect_im)
@@ -91,9 +92,9 @@ class AndorPlot:
             return
 
         fig = self.figures[0]
-        ax_img: plt.axes = fig.get_axes()[0]
+        ax_img: Axes = fig.get_axes()[0]
         y2, y1 = ax_img.get_ylim()
-        height = y2 - y1
+        height = int(round(y2 - y1))
         center = height // 2
         self.plot_singletrack_bounds(
             single_track=SingleTrack(center=center, height=height)
@@ -114,7 +115,7 @@ class AndorPlot:
             x1 = 0
             x2 = im.shape[1]
             self.plot_image(im, fig)
-            self.plot_bounds(fig, xs=[x1, x2], ys=[y1, y2])
+            self.plot_bounds(fig, xs=(x1, x2), ys=(y1, y2))
 
             fig.canvas.draw()
 
@@ -137,7 +138,7 @@ class AndorPlot:
             for i in range(n_track):
                 y1 = i * (gap + height) + bottom
                 y2 = y1 + height
-                self.plot_bounds(fig, xs=[x1, x2], ys=[y1, y2])
+                self.plot_bounds(fig, xs=(x1, x2), ys=(y1, y2))
 
             fig.canvas.draw()
 
@@ -156,11 +157,13 @@ class AndorPlot:
 
             for i in range(0, len(tracks), 2):
                 y1, y2 = tracks[i : i + 2]
-                self.plot_bounds(fig, xs=[x1, x2], ys=[y1, y2])
+                self.plot_bounds(fig, xs=(x1, x2), ys=(y1, y2))
 
             fig.canvas.draw()
 
-    def plot_bounds(self, fig: plt.figure, xs: tuple[int, int], ys: tuple[int, int]):
+    def plot_bounds(
+        self, fig: Figure, xs: tuple[int, int], ys: tuple[int, int]
+    ) -> None:
         x1, x2 = xs
         y1, y2 = ys
 
@@ -170,7 +173,7 @@ class AndorPlot:
         y2 = y2 + 0.5
 
         # Add patch to image
-        ax_img: plt.axes = fig.get_axes()[0]
+        ax_img: Axes = fig.get_axes()[0]
         og_ylim = ax_img.get_ylim()
         og_xlim = ax_img.get_xlim()
 
@@ -188,7 +191,7 @@ class AndorPlot:
         ax_img.set_ylim(og_ylim)
 
         # Add lines to xhist
-        ax_sumx: plt.axes = fig.get_axes()[2]
+        ax_sumx: Axes = fig.get_axes()[2]
         og_ylim = ax_sumx.get_ylim()
         og_xlim = ax_sumx.get_xlim()
 
@@ -200,7 +203,6 @@ class AndorPlot:
 
 
 if __name__ == "__main__":
-
     data_ = np.random.rand(1, 256, 1024)
 
     andor_plot = AndorPlot(data_)

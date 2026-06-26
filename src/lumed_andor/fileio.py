@@ -23,7 +23,6 @@ def import_setting(filepath: Path) -> AndorSettings:
 
 
 if __name__ == "__main__":
-
     s = AndorSettings()
     s.acquisition_mode = 2
     s.read_mode = 3

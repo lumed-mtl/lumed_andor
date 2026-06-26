@@ -223,7 +223,7 @@ class MultiTrack:
 @dataclass(kw_only=True)
 class RandomTrack:
     hbin: int = 1
-    tracks: list = field(default_factory=list)
+    tracks: list[int] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
@@ -278,7 +278,7 @@ class AndorCamera:
     def __init__(self):
         lib_dir = Path("/usr/local/lib/")
         lib_path = lib_dir / "libandor.so"
-        self.__libandor__ = ctypes.cdll.LoadLibrary(lib_path)
+        self.__libandor__ = ctypes.cdll.LoadLibrary(str(lib_path))
 
         # Internal parameter references
         self._mutex: Lock = Lock()
@@ -565,7 +565,7 @@ class AndorCamera:
 
         return float(gain_factor.value)
 
-    def GetSoftwareVersion(self) -> list[int, int, int, int, int, int]:
+    def GetSoftwareVersion(self) -> tuple[int, int, int, int, int, int]:
         eprom = ctypes.c_int()
         cofFile = ctypes.c_int()
         vxdRev = ctypes.c_int()
@@ -595,7 +595,7 @@ class AndorCamera:
             dllVer.value,
         )
 
-    def GetHardwareVersion(self) -> str:
+    def GetHardwareVersion(self) -> tuple[int, int, int, int, int, int]:
 
         pcbVer = ctypes.c_int()
         decodeVer = ctypes.c_int()
@@ -728,16 +728,16 @@ class AndorCamera:
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetHSSpeed(self, typ: int, index: int) -> None:
-        amp = ctypes.c_int(typ)
-        index = ctypes.c_int(index)
-        err_code = self._safelibcall(self.__libandor__.SetHSSpeed, amp, index)
+        amp_cint = ctypes.c_int(typ)
+        index_cint = ctypes.c_int(index)
+        err_code = self._safelibcall(self.__libandor__.SetHSSpeed, amp_cint, index_cint)
 
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetVSSpeed(self, index: int) -> None:
-        index = ctypes.c_int(index)
-        err_code = self._safelibcall(self.__libandor__.SetVSSpeed, index)
+        index_cint = ctypes.c_int(index)
+        err_code = self._safelibcall(self.__libandor__.SetVSSpeed, index_cint)
 
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
@@ -745,24 +745,30 @@ class AndorCamera:
     def SetImage(
         self, hbin: int, vbin: int, hstart: int, hend: int, vstart: int, vend: int
     ) -> None:
-        hbin = ctypes.c_int(hbin)
-        vbin = ctypes.c_int(vbin)
-        hstart = ctypes.c_int(hstart)
-        hend = ctypes.c_int(hend)
-        vstart = ctypes.c_int(vstart)
-        vend = ctypes.c_int(vend)
+        hbin_cint = ctypes.c_int(hbin)
+        vbin_cint = ctypes.c_int(vbin)
+        hstart_cint = ctypes.c_int(hstart)
+        hend_cint = ctypes.c_int(hend)
+        vstart_cint = ctypes.c_int(vstart)
+        vend_cint = ctypes.c_int(vend)
         err_code = self._safelibcall(
-            self.__libandor__.SetImage, hbin, vbin, hstart, hend, vstart, vend
+            self.__libandor__.SetImage,
+            hbin_cint,
+            vbin_cint,
+            hstart_cint,
+            hend_cint,
+            vstart_cint,
+            vend_cint,
         )
 
         if err_code == SUCCESS_CODE:
             self.image_config = ImageConfig(
-                hbin=hbin.value,
-                vbin=vbin.value,
-                hstart=hstart.value,
-                vstart=vstart.value,
-                hend=hend.value,
-                vend=vend.value,
+                hbin=hbin,
+                vbin=vbin,
+                hstart=hstart,
+                vstart=vstart,
+                hend=hend,
+                vend=vend,
             )
 
         self.last_error = AndorError(err_code)
@@ -779,24 +785,24 @@ class AndorCamera:
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
     def SetMultiTrack(self, number: int, height: int, offset: int) -> None:
-        number = ctypes.c_int(number)
-        height = ctypes.c_int(height)
-        offset = ctypes.c_int(offset)
+        number_cint = ctypes.c_int(number)
+        height_cint = ctypes.c_int(height)
+        offset_cint = ctypes.c_int(offset)
         bottom = ctypes.c_int()
         gap = ctypes.c_int()
         err_core = self._safelibcall(
             self.__libandor__.SetMultiTrack,
-            number,
-            height,
-            offset,
+            number_cint,
+            height_cint,
+            offset_cint,
             ctypes.byref(bottom),
             ctypes.byref(gap),
         )
         if err_core == SUCCESS_CODE:
             self.multi_track = MultiTrack(
-                number=number.value,
-                height=height.value,
-                offset=offset.value,
+                number=number,
+                height=height,
+                offset=offset,
                 bottom=bottom.value,
                 gap=gap.value,
             )
@@ -804,16 +810,16 @@ class AndorCamera:
         self.last_error = AndorError(err_core)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
 
-    def SetRandomTracks(self, numTracks: int, areas: int) -> None:
-        numTracks = ctypes.c_int(numTracks)
-        c_areas = ctypes.c_int * len(areas)
-        c_areas = c_areas(*areas)
+    def SetRandomTracks(self, numTracks: int, areas: list[int]) -> None:
+        num_tracks_cint = ctypes.c_int(numTracks)
+        c_areas_type = ctypes.c_int * len(areas)
+        c_areas = c_areas_type(*areas)
 
         err_code = self._safelibcall(
-            self.__libandor__.SetRandomTracks, numTracks, ctypes.byref(c_areas)
+            self.__libandor__.SetRandomTracks, num_tracks_cint, ctypes.byref(c_areas)
         )
         if err_code == SUCCESS_CODE:
-            self.random_track = RandomTrack(tracks=areas)
+            self.random_track = RandomTrack(tracks=areas.copy())
 
         self.last_error = AndorError(err_code)
         logger.debug("%i, %s", self.last_error.code, self.last_error.message)
@@ -1040,7 +1046,6 @@ class AndorCamera:
 
 
 if __name__ == "__main__":
-
     LOG_FORMAT = (
         "%(asctime)s - %(levelname)s"
         "(%(filename)s:%(funcName)s)"
@@ -1054,14 +1059,16 @@ if __name__ == "__main__":
     logger.setLevel(logging.DEBUG)
 
     camera = AndorCamera()
-    camera.connect()
 
-    info_ = camera.info
-    settings_ = camera.get_settings()
+    print(camera.GetAvailableCameras())
+    # camera.connect()
 
-    camera.SetRandomTracks(1, areas=[1, 25])
+    # info_ = camera.info
+    # settings_ = camera.get_settings()
 
-    print(info_.software_version)
-    print(info_.hardware_version)
+    # camera.SetRandomTracks(1, areas=[1, 25])
 
-    camera.disconnect()
+    # print(info_.software_version)
+    # print(info_.hardware_version)
+
+    # camera.disconnect()
