@@ -1,16 +1,71 @@
-[build-system]
-requires = ["setuptools >= 61.0"]
-build-backend = "setuptools.build_meta"
-
-
 [project]
 name = "lumed_andor"
-version = "2.0.rc2"
-authors = [{ name = "Guillaume Sheehy", email = "guillaume.sheehy@polymtl.ca" }]
-dependencies = ["PyQt5", "numpy", "matplotlib", "tomli", "tomli-w", "dacite"]
-description = "A library and GUI to control Andor cameras."
+version = "2.0rc2"
+description = "Python wrapper and PyQt GUI for Andor camera control."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
+license = "GPL-3.0-only"
+authors = [{ name = "Guillaume Sheehy", email = "guillaume.sheehy@polymtl.ca" }]
+dependencies = [
+  "PyQt5",
+  "dacite",
+  "matplotlib",
+  "numpy",
+  "tomli",
+  "tomli-w",
+]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-cov",
+  "ruff",
+  "ty",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest]
+addopts = [
+  "--cov-branch",
+  "--cov-report=term-missing:skip-covered",
+  "--cov=orpl",
+  "--tb=short",
+  "-ra",
+]
+console_output_style = "count"
+log_cli = false
+log_cli_level = "INFO"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors (e.g., E501: line too long, E302: expected 2 blank lines)
+  "F",  # pyflakes (e.g., F401: unused import, F821: undefined name)
+  "W",  # pycodestyle warnings (e.g., W291: trailing whitespace, W293: blank line contains whitespace)
+  "I",  # isort (e.g., I001: import block unsorted, I003: import statements in wrong section)
+  "B",  # bugbear (e.g., B006: mutable default argument, B007: loop variable overwrites argument)
+  "UP",  # pyupgrade (e.g., UP006: use modern type annotations, UP035: use f-string instead of format)
+  "C90",  # mccabe complexity (e.g., C901: function is too complex)
+  # "D",  # pydocstyle (e.g., D100: missing docstring in public module, D401: first line should be in imperative mood)
+  "N",  # pep8-naming (e.g., N802: function name should be lowercase, N806: variable in function should be lowercase)
+  "PL",  # pylint (e.g., PLR0913: too many arguments, PLC0411: wrong import order)
+  "PERF",  # perflint (e.g., PERF401: manual list comprehension, PERF203: unnecessary list cast)
+  "T20",  # flake8-print (T201 = print)
+  "ANN",  # flake8-annotations (type hints)
+]
+extend-select = [
+  # "ALL",  # Uncomment to enable all lint rules
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
