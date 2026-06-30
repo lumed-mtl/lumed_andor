@@ -380,6 +380,13 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
 
         self.camera.SetExposureTime(new_exposure_time)
         self.camera.get_info()
+
+        self.spinBoxTargetExposureTime.blockSignals(True)
+        try:
+            self.spinBoxTargetExposureTime.setValue(self.camera.target_exposure_time)
+        finally:
+            self.spinBoxTargetExposureTime.blockSignals(False)
+
         andor_msg = self.camera.last_error.message
         logger.info("exposure time changed - %i ms - %s", new_exposure_time, andor_msg)
 

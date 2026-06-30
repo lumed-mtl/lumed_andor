@@ -1,6 +1,7 @@
 import ctypes
 import importlib.metadata
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -1037,6 +1038,9 @@ class AndorCamera:
         info.exposure_time, info.accumulate_cycle, info.kinetic_cycle = (
             self.GetAcquisitionTimings()
         )
+        if self.last_error.is_success:
+            tolerance_ms = 1e-3
+            self.target_exposure_time = math.ceil(info.exposure_time - tolerance_ms)
         info.xpixels, info.ypixels = self.GetDetector()
 
         info.software_version = SoftwareVersion(*self.GetSoftwareVersion())
