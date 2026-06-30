@@ -24,27 +24,45 @@ These paths are currently hardcoded in `src/lumed_andor/andor_control.py`.
 
 Project uses modern Python packaging and dependency management with [uv](https://github.com/astral-sh/uv).
 
-### Runtime install from repository
+### Install latest package from GitHub
+
+Create a virtual environment and install directly from the GitHub repository URL:
 
 ```sh
-git clone git@github.com:lumed-mtl/lumed_andor.git
-cd lumed_andor
-uv sync --no-dev
+uv venv
+source .venv/bin/activate
+uv pip install git+https://github.com/lumed-mtl/lumed_andor.git
 ```
 
-### Developer install
+This path installs the package with runtime dependencies only.
+
+### Developer checkout
 
 ```sh
-git clone git@github.com:lumed-mtl/lumed_andor.git
+git clone https://github.com/lumed-mtl/lumed_andor.git
 cd lumed_andor
-uv sync
+uv sync --locked
 ```
 
-The default `uv sync` workflow installs the package plus the `dev` dependency group.
+`uv sync --locked` installs the package plus the default `dev` dependency group from `pyproject.toml`.
+
+For a runtime-only environment from a local checkout:
+
+```sh
+uv sync --locked --no-dev
+```
 
 ## Running the GUI
 
 The package exposes a module entry point through `python -m lumed_andor`.
+
+From an activated virtual environment or a synced checkout:
+
+```sh
+python -m lumed_andor
+```
+
+From a development checkout, the equivalent `uv` command is:
 
 ```sh
 uv run python -m lumed_andor
