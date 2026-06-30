@@ -338,7 +338,7 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
         self.spinBoxImageVEnd.setMinimum(1)
 
         # Timings
-        self.spinBoxTargetExposureTime.setMinimum(10)
+        self.spinBoxTargetExposureTime.setMinimum(0)
 
     def disconnectBtnClicked(self):
         logger.info("Disconnecting Andor camera")
@@ -379,6 +379,14 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
             return
 
         self.camera.SetExposureTime(new_exposure_time)
+        self.camera.get_info()
+
+        self.spinBoxTargetExposureTime.blockSignals(True)
+        try:
+            self.spinBoxTargetExposureTime.setValue(self.camera.target_exposure_time)
+        finally:
+            self.spinBoxTargetExposureTime.blockSignals(False)
+
         andor_msg = self.camera.last_error.message
         logger.info("exposure time changed - %i ms - %s", new_exposure_time, andor_msg)
 
@@ -439,7 +447,7 @@ class AndorCameraWidget(QWidget, Ui_andorCameraWidget):
                 return
             if len(new_tracks) % 2 > 0:
                 return
-        except:
+        except (SyntaxError, ValueError):
             return
 
         numTracks = len(new_tracks) // 2

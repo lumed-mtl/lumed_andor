@@ -16,7 +16,6 @@ LOG_FORMAT = (
 
 
 if __name__ == "__main__":
-
     formatter = logging.Formatter(LOG_FORMAT)
     terminal_handler = logging.StreamHandler()
     terminal_handler.setFormatter(formatter)
