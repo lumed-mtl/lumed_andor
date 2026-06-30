@@ -1,6 +1,6 @@
 [project]
 name = "lumed_andor"
-version = "2.0rc2"
+version = "2.0.1"
 description = "Python wrapper and PyQt GUI for Andor camera control."
 readme = "README.md"
 requires-python = ">=3.12"
